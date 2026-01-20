@@ -1,4 +1,3 @@
-
 #!/usr/bin/env sh
 # Step: <HUMAN FRIENDLY TITLE>
 #
@@ -6,10 +5,12 @@
 #
 # This step is intended to be run *only* via install.sh, which is responsible for:
 #   - Detecting PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR.
+#   - Parsing CLI flags (e.g. --debug).
 #   - Initialising a per-run LOGFILE and passing it to this step.
 #
 # Assumptions (passed from install.sh):
 #   - PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR, LOGFILE, STEP_NAME are exported.
+#   - DEBUG is exported and set to "1" or "0".
 #   - LOGFILE already exists and is writable.
 #
 # Responsibilities:
@@ -94,10 +95,26 @@ Environment snapshot (as passed from install.sh):
   ARCH       = ${ARCH:-<unset>}
   DEVICE_ID  = ${DEVICE_ID:-<unset>}
   PKG_MGR    = ${PKG_MGR:-<unset>}
+  DEBUG      = ${DEBUG:-0}
   LOGFILE    = ${LOGFILE:-<unset>}
 EOF
 
 log "$STEP_TITLE: starting (PLATFORM=$PLATFORM, DISTRO=$DISTRO, ARCH=$ARCH, DEVICE_ID=${DEVICE_ID:-unknown}, PKG_MGR=${PKG_MGR:-none})"
+
+# --------------------------------------------------------------------
+# Optional DEBUG diagnostics
+# --------------------------------------------------------------------
+# These diagnostics are emitted only when DEBUG=1.
+# They must not affect control flow or stdout parsing.
+
+if [ "${DEBUG:-0}" = "1" ]; then
+  log_block <<EOF
+DEBUG: step context
+  STEP_NAME = ${STEP_NAME:-<unset>}
+  SCRIPT    = $(basename "$0")
+  LOCATION  = "$SCRIPT_DIR"
+EOF
+fi
 
 # --------------------------------------------------------------------
 # Validation details (reusable block)
@@ -107,16 +124,21 @@ log "$STEP_TITLE: starting (PLATFORM=$PLATFORM, DISTRO=$DISTRO, ARCH=$ARCH, DEVI
 
 PRIMARY_CMD="<primary-command-or-check>"
 
-VALIDATION_DETAILS=$(cat <<EOF
-Validation details:
-  ${PRIMARY_CMD} path: $(command -v "$PRIMARY_CMD" 2>/dev/null || echo "<not found>")
-  ${PRIMARY_CMD} version/info: $("$PRIMARY_CMD" --version 2>/dev/null || echo "<version check failed>")
-EOF
-)
-
 log_validation_details() {
   # Appends validation details into the shared LOGFILE for this run.
-  printf '%s\n' "$VALIDATION_DETAILS" | add_comments
+  #
+  # NOTE: PRIMARY_CMD is a template placeholder by default. We guard the
+  # command invocation so the template doesn't try to execute "<primary...>".
+  if [ "$PRIMARY_CMD" = "<primary-command-or-check>" ]; then
+    printf '%s\n' "Validation details: PRIMARY_CMD not set (template placeholder)." | add_comments
+    return 0
+  fi
+
+  {
+    printf 'Validation details:\n'
+    printf '  %s path: %s\n' "$PRIMARY_CMD" "$(command -v "$PRIMARY_CMD" 2>/dev/null || echo "<not found>")"
+    printf '  %s version/info: %s\n' "$PRIMARY_CMD" "$("$PRIMARY_CMD" --version 2>/dev/null || echo "<version check failed>")"
+  } | add_comments
 }
 
 # --------------------------------------------------------------------

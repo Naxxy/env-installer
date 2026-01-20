@@ -32,7 +32,7 @@ set -eu
 # --------------------------------------------------------------------
 # When DEBUG=1, the installer will emit additional diagnostic output.
 # Keep this set to 0 for normal runs.
-DEBUG=1
+DEBUG=0
 
 # --------------------------------------------------------------------
 # Repository root resolution
@@ -306,9 +306,15 @@ EOF
       fi
 
       STEP_NAME="$step" \
-        PLATFORM="$PLATFORM" DISTRO="$DISTRO" ARCH="$ARCH" DEVICE_ID="${DEVICE_ID:-unknown}" \
-        PKG_MGR="$PKG_MGR" SUDO="${SUDO:-}" LOGFILE="$LOGFILE" \
-        sh "$STEPS_DIR/$rel"
+      DEBUG="$DEBUG" \
+      PLATFORM="$PLATFORM" \
+      DISTRO="$DISTRO" \
+      ARCH="$ARCH" \
+      DEVICE_ID="${DEVICE_ID:-unknown}" \
+      PKG_MGR="$PKG_MGR" \
+      SUDO="${SUDO:-}" \
+      LOGFILE="$LOGFILE" \
+      sh "$STEPS_DIR/$rel"
 
       log_block <<EOF
 ────────────────────────────────────────────────────────
@@ -373,13 +379,21 @@ EOF
   # 3. Parse CLI arguments.
   #
   #    Supported forms:
-  #      $0 --list
-  #      $0 --steps step1 step2 ...
+  #      $0 --debug
+  #      $0 --debug --list
+  #      $0 --debug --steps step1 step2 ...
+  #
+  #    Notes:
+  #      - --debug may appear anywhere in the argument list.
   #
   #    Default:
   #      - If no flags are provided, we run all steps.
   while [ "$#" -gt 0 ]; do
     case "$1" in
+    --debug)
+        DEBUG=1
+        shift
+        ;;
     --steps)
       RUN_ALL=false
       shift
