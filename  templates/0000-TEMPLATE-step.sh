@@ -5,11 +5,11 @@
 # Filename convention: dddd-<name>.sh (e.g. 0020-install-yt-dlp.sh)
 #
 # This step is intended to be run *only* via install.sh, which is responsible for:
-#   - Detecting PLATFORM, DISTRO, ARCH, PKG_MGR.
+#   - Detecting PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR.
 #   - Initialising a per-run LOGFILE and passing it to this step.
 #
 # Assumptions (passed from install.sh):
-#   - PLATFORM, DISTRO, ARCH, PKG_MGR, LOGFILE, STEP_NAME are exported.
+#   - PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR, LOGFILE, STEP_NAME are exported.
 #   - LOGFILE already exists and is writable.
 #
 # Responsibilities:
@@ -20,10 +20,15 @@
 # Structure:
 #   1) Safety checks + common.sh import
 #   2) Logfile header + intent
-#   3) Guards (platform/distro/arch/pkg mgr)  [DELETE IF NOT NEEDED]
+#   3) Guards (platform/distro/arch/device/pkg mgr)  [DELETE IF NOT NEEDED]
 #   4) Idempotency check
 #   5) Apply changes (install/configure)
 #   6) Validate final state (+ validation details)
+#
+# Scope note:
+#   - If this file lives under a scoped directory (e.g. steps/devices/<id>/),
+#     it will usually override a more generic step with the same <name>.
+#   - Keep the same "<name>" portion intentionally when you *want* an override.
 
 set -eu
 
@@ -31,10 +36,32 @@ set -eu
 # 1) Load shared helpers
 # --------------------------------------------------------------------
 # Steps run in their own sh process, so we must source common.sh again.
+#
+# IMPORTANT:
+#   Steps may live under nested scoped directories:
+#     steps/<platform>/...
+#     steps/<platform>/<distro>/...
+#     steps/<platform>/arch/<arch>/...
+#     steps/devices/<device-id>/...
+#   So we cannot assume ".." gets us to repo root.
+#
+# Instead, walk upwards until we find lib/common.sh.
 
-ROOT_DIR="$(
-  CDPATH= cd -- "$(dirname -- "$0")/.." && pwd
+SCRIPT_DIR="$(
+  CDPATH= cd -- "$(dirname -- "$0")" && pwd
 )"
+
+ROOT_DIR="$SCRIPT_DIR"
+while [ ! -f "$ROOT_DIR/lib/common.sh" ]; do
+  ROOT_DIR="$(
+    CDPATH= cd -- "$ROOT_DIR/.." && pwd
+  )"
+
+  if [ "$ROOT_DIR" = "/" ]; then
+    echo "[ERR] Could not locate repo root (lib/common.sh not found)." >&2
+    exit 1
+  fi
+done
 
 # shellcheck source=lib/common.sh
 . "$ROOT_DIR/lib/common.sh"
@@ -45,6 +72,8 @@ ROOT_DIR="$(
 
 require_logfile
 
+# Prefer the logical name install.sh provides (derived from filename).
+# Fallback is useful when running manually during development.
 STEP_TITLE="${STEP_NAME:-<dddd-step-name>}"
 
 add_title "$STEP_TITLE"
@@ -60,14 +89,15 @@ Behaviour:
     depending on how guards are configured.
 
 Environment snapshot (as passed from install.sh):
-  PLATFORM = ${PLATFORM:-<unset>}
-  DISTRO   = ${DISTRO:-<unset>}
-  ARCH     = ${ARCH:-<unset>}
-  PKG_MGR  = ${PKG_MGR:-<unset>}
-  LOGFILE  = ${LOGFILE:-<unset>}
+  PLATFORM   = ${PLATFORM:-<unset>}
+  DISTRO     = ${DISTRO:-<unset>}
+  ARCH       = ${ARCH:-<unset>}
+  DEVICE_ID  = ${DEVICE_ID:-<unset>}
+  PKG_MGR    = ${PKG_MGR:-<unset>}
+  LOGFILE    = ${LOGFILE:-<unset>}
 EOF
 
-log "$STEP_TITLE: starting (PLATFORM=$PLATFORM, DISTRO=$DISTRO, ARCH=$ARCH, PKG_MGR=${PKG_MGR:-none})"
+log "$STEP_TITLE: starting (PLATFORM=$PLATFORM, DISTRO=$DISTRO, ARCH=$ARCH, DEVICE_ID=${DEVICE_ID:-unknown}, PKG_MGR=${PKG_MGR:-none})"
 
 # --------------------------------------------------------------------
 # Validation details (reusable block)
@@ -75,21 +105,27 @@ log "$STEP_TITLE: starting (PLATFORM=$PLATFORM, DISTRO=$DISTRO, ARCH=$ARCH, PKG_
 # State-agnostic diagnostic output to help debug PATH / wrong binary issues.
 # Safe to delete if you prefer quieter logs.
 
+PRIMARY_CMD="<primary-command-or-check>"
+
 VALIDATION_DETAILS=$(cat <<EOF
 Validation details:
-  <THING> path: $(command -v <primary-command-or-check> 2>/dev/null || echo "<not found>")
-  <THING> version/info: $(<primary-command-or-check> --version 2>/dev/null || echo "<version check failed>")
+  ${PRIMARY_CMD} path: $(command -v "$PRIMARY_CMD" 2>/dev/null || echo "<not found>")
+  ${PRIMARY_CMD} version/info: $("$PRIMARY_CMD" --version 2>/dev/null || echo "<version check failed>")
 EOF
 )
 
 log_validation_details() {
+  # Appends validation details into the shared LOGFILE for this run.
   printf '%s\n' "$VALIDATION_DETAILS" | add_comments
 }
 
 # --------------------------------------------------------------------
-# 3) Guards / requirements (PLATFORM / DISTRO / ARCH / PKG_MGR)
+# 3) Guards / requirements (PLATFORM / DISTRO / ARCH / DEVICE_ID / PKG_MGR)
 #    DELETE THIS SECTION IF NOT NEEDED
 # --------------------------------------------------------------------
+# Guards are "safety rails". Even if this script is in a scoped directory,
+# keep guards if the step is risky or device-specific.
+#
 # Choose one of these patterns:
 #
 # HARD FAIL:
@@ -119,6 +155,16 @@ log_validation_details() {
 #     ;;
 # esac
 
+# Example: device specific
+# (Useful even inside steps/devices/<device-id>/ as a defensive check.)
+# if ! require_device "thinkpad-x240"; then
+#   log "Skipping: this step only applies to device thinkpad-x240 (got '${DEVICE_ID:-unknown}')."
+#   exit 0
+# fi
+#
+# Alternative hard-fail version:
+# require_device "thinkpad-x240" || die "This step is only for device thinkpad-x240."
+
 # Example: require a package manager
 # if [ "${PKG_MGR:-none}" = "none" ]; then
 #   warn "No supported package manager detected."
@@ -135,17 +181,25 @@ log_validation_details() {
 # --------------------------------------------------------------------
 # 4) Idempotency check (desired state)
 # --------------------------------------------------------------------
-# Replace this with the correct desired-state check(s).
+# Replace this with the correct desired-state check(s) for <THING>.
+#
+# Common patterns:
+#   - command exists: available toolname
+#   - config file exists with desired content
+#   - service enabled/active
+#   - a symlink points to expected target
+#
+# Keep idempotency checks cheap and predictable.
 
 # Example: command exists
-# if available <command>; then
+# if available "$PRIMARY_CMD"; then
 #   log "<THING> already installed; skipping."
 #   log_validation_details
 #   exit 0
 # fi
 
 # TODO: implement idempotency check for <THING>
-if available <primary-command-or-check>; then
+if available "$PRIMARY_CMD"; then
   log "<THING> already present; skipping."
   log_validation_details
   exit 0
@@ -156,6 +210,9 @@ fi
 # --------------------------------------------------------------------
 # Prefer ensure_packages for package installs.
 # Use run / as_root for custom logic.
+#
+# Keep this section small. If it grows large, extract helpers into lib/
+# and keep the step as orchestration.
 
 case "${PKG_MGR:-none}" in
   apt)
@@ -183,8 +240,10 @@ esac
 # --------------------------------------------------------------------
 # 6) Validate final state (+ validation details)
 # --------------------------------------------------------------------
+# Always validate the desired state after applying changes.
+# This prevents silent partial installs.
 
-if available <primary-command-or-check>; then
+if available "$PRIMARY_CMD"; then
   log "<THING> installation/configuration complete."
   log_validation_details
 else
