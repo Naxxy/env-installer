@@ -121,12 +121,11 @@ EOF
 # --------------------------------------------------------------------
 usage() {
   cat <<EOF
-Usage: $0 [--list] [--steps step1 step2 ...] [--all]
+Usage: $0 [--list] [--steps step1 step2 ...]
 
 Options:
   --list              List available steps and exit.
   --steps <step...>   Run only the listed steps, in the order provided.
-  --all               Run all steps (in numeric order based on filename prefix).
   -h, --help          Show this help.
 
 Defaults:
@@ -153,6 +152,29 @@ EOF
 # Step discovery
 # --------------------------------------------------------------------
 
+# step_roots
+#   Prints directories (one per line) that may contain steps, in increasing specificity.
+#   Later directories override earlier ones for the same logical step name.
+step_roots() {
+  printf '%s\n' "$STEPS_DIR"
+
+  if [ -n "${PLATFORM:-}" ] && [ -d "$STEPS_DIR/$PLATFORM" ]; then
+    printf '%s\n' "$STEPS_DIR/$PLATFORM"
+  fi
+
+  if [ -n "${PLATFORM:-}" ] && [ -n "${DISTRO:-}" ] && [ -d "$STEPS_DIR/$PLATFORM/$DISTRO" ]; then
+    printf '%s\n' "$STEPS_DIR/$PLATFORM/$DISTRO"
+  fi
+
+  if [ -n "${PLATFORM:-}" ] && [ -n "${ARCH:-}" ] && [ -d "$STEPS_DIR/$PLATFORM/arch/$ARCH" ]; then
+    printf '%s\n' "$STEPS_DIR/$PLATFORM/arch/$ARCH"
+  fi
+
+  if [ -n "${DEVICE_ID:-}" ] && [ -d "$STEPS_DIR/devices/$DEVICE_ID" ]; then
+    printf '%s\n' "$STEPS_DIR/devices/$DEVICE_ID"
+  fi
+}
+
 # find_step_files
 #   Emits the *filenames* of all step scripts, one per line, sorted
 #   lexicographically. We rely on numeric prefixes (e.g. "10-") to
@@ -168,9 +190,28 @@ find_step_files() {
     die "Steps directory not found: $STEPS_DIR"
   fi
 
-  find "$STEPS_DIR" -maxdepth 1 -type f -name '*.sh' |
-    sed 's|.*/||' |
-    sort
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir" 2>/dev/null || true' EXIT
+
+  # Build a "latest wins" mapping by writing each step's chosen relpath into a temp file.
+  # Using files avoids needing associative arrays (POSIX sh portability).
+  for root in $(step_roots); do
+    find "$root" -maxdepth 1 -type f -name '*.sh' 2>/dev/null | while IFS= read -r abs; do
+      rel="${abs#"$STEPS_DIR/"}"
+      step="$(filename_to_step "$(basename "$abs")")"
+      # overwrite = higher precedence
+      printf '%s\n' "$rel" >"$tmp_dir/$step"
+    done
+  done
+
+  # Emit "<basename>\t<relpath>" so we can sort by basename (numeric prefix),
+  # then print "<relpath>" (steps-relative path).
+  for f in "$tmp_dir"/*; do
+    [ -f "$f" ] || continue
+    rel="$(cat "$f")"
+    base="$(basename "$rel")"
+    printf '%s\t%s\n' "$base" "$rel"
+  done | sort | awk -F'\t' '{print $2}'
 }
 
 # filename_to_step
@@ -188,9 +229,10 @@ filename_to_step() {
 #   Prints all known steps in a tabular form: "<step-name>\t<filename>".
 #   Used for --list, and also useful for debugging.
 list_steps() {
-  for f in $(find_step_files); do
-    step="$(filename_to_step "$f")"
-    printf '%s\t%s\n' "$step" "$f"
+  for rel in $(find_step_files); do
+    base="$(basename "$rel")"
+    step="$(filename_to_step "$base")"
+    printf '%s\t%s\n' "$step" "$rel"
   done
 }
 
@@ -217,14 +259,15 @@ run_step() {
   step="$1"
 
   # Look for a matching filename in the discovered steps.
-  for f in $(find_step_files); do
-    name="$(filename_to_step "$f")"
+  for rel in $(find_step_files); do
+    base="$(basename "$rel")"
+    name="$(filename_to_step "$base")"
     if [ "$name" = "$step" ]; then
-      log "=== Running step: $step ($f) ==="
+      log "=== Running step: $step ($rel) ==="
       STEP_NAME="$step" \
-        PLATFORM="$PLATFORM" DISTRO="$DISTRO" ARCH="$ARCH" \
+        PLATFORM="$PLATFORM" DISTRO="$DISTRO" ARCH="$ARCH" DEVICE_ID="${DEVICE_ID:-unknown}" \
         PKG_MGR="$PKG_MGR" SUDO="${SUDO:-}" LOGFILE="$LOGFILE" \
-        sh "$STEPS_DIR/$f"
+        sh "$STEPS_DIR/$rel"
       log "=== Finished step: $step ==="
       return 0
     fi
@@ -255,22 +298,37 @@ main() {
   init_logfile
   log "Logging to: $LOGFILE"
 
-  RUN_ALL=false
+  RUN_ALL=true
   STEPS=""
 
   # 3. Parse CLI arguments.
   #
   #    Supported forms:
-  #      $0 --all
   #      $0 --list
-  #      $0 step1 step2 ...
+  #      $0 --steps step1 step2 ...
   #
-  #    Rule: if neither --all nor explicit steps are provided, we treat it
-  #    as "--all" by default (see check after parsing).
+  #    Default:
+  #      - If no flags are provided, we run all steps.
   while [ "$#" -gt 0 ]; do
     case "$1" in
-    --all)
-      RUN_ALL=true
+    --steps)
+      RUN_ALL=false
+      shift
+      if [ "$#" -eq 0 ]; then
+        die "--steps requires at least one step name"
+      fi
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --*|-h|--help)
+            break
+            ;;
+          *)
+            STEPS="$STEPS $1"
+            ;;
+        esac
+        shift
+      done
+      continue
       ;;
     --list)
       list_steps
@@ -281,28 +339,23 @@ main() {
       exit 0
       ;;
     *)
-      # Any non-flag argument is treated as a step name.
-      # We preserve order so user-specified sequence is respected.
-      STEPS="$STEPS $1"
+      die "Unknown argument: $1 (use --steps to specify step names)"
       ;;
     esac
     shift
   done
 
-  # 4. Decide what to run.
-  #
-  #    If the user did not explicitly request --all and also did not
-  #    specify any steps, default to running all steps.
+  # If the user chose --steps, they must provide at least one step name.
   if [ "$RUN_ALL" = false ] && [ -z "$STEPS" ]; then
-    RUN_ALL=true
+    die "--steps requires at least one step name"
   fi
 
   # 5. Execute either:
   #      - all steps (in filename order), or
   #      - only the named steps (in the order provided on the CLI).
   if [ "$RUN_ALL" = true ]; then
-    for f in $(find_step_files); do
-      step="$(filename_to_step "$f")"
+    for rel in $(find_step_files); do
+      step="$(filename_to_step "$(basename "$rel")")"
       run_step "$step"
     done
   else

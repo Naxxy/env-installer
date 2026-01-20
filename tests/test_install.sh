@@ -1,3 +1,4 @@
+
 #!/usr/bin/env sh
 set -eu
 
@@ -55,11 +56,11 @@ assert_in() {
   needle="$1"
   haystack="$2"
   case "$haystack" in
-  *"$needle"*) : ;;
-  *)
-    printf '[TEST ERR] assert_in failed: "%s" not found in:\n%s\n' "$needle" "$haystack" >&2
-    exit 1
-    ;;
+    *"$needle"*) : ;;
+    *)
+      printf '[TEST ERR] assert_in failed: "%s" not found in:\n%s\n' "$needle" "$haystack" >&2
+      exit 1
+      ;;
   esac
 }
 
@@ -69,7 +70,7 @@ assert_in() {
 # Each test gets its own temporary "mini repo" with:
 #   FIX_DIR/install.sh
 #   FIX_DIR/lib/common.sh
-#   FIX_DIR/steps/*.sh
+#   FIX_DIR/steps/.../*.sh
 #   FIX_DIR/logs/ (for ENV_INSTALLER_LOG_DIR)
 
 setup_fixture() {
@@ -81,21 +82,31 @@ setup_fixture() {
   # Copy the real scripts into the fixture so relative paths still work
   cp "$ROOT_DIR/install.sh" "$FIX_DIR/install.sh"
   cp "$ROOT_DIR/lib/common.sh" "$FIX_DIR/lib/common.sh"
+
+  chmod +x "$FIX_DIR/install.sh"
 }
 
 cleanup_fixture() {
   rm -rf "${FIX_DIR:-}" 2>/dev/null || true
 }
 
-# Helper to run the installer in the fixture
+# Helper to run the installer in the fixture.
+#
+# Notes:
+# - We always set ENV_INSTALLER_LOG_DIR so logs land inside the fixture.
+# - We also set BOTH ENV_INSTALLER_DEVICE_ID and ENV_INSTALLER_DEVICE as overrides,
+#   to match whichever env-var name detect_device_id() expects.
 run_installer() {
   (
     cd "$FIX_DIR"
-    ENV_INSTALLER_LOG_DIR="$LOG_DIR" sh "$FIX_DIR/install.sh" "$@"
+    ENV_INSTALLER_LOG_DIR="$LOG_DIR" \
+    ENV_INSTALLER_DEVICE_ID="${ENV_INSTALLER_DEVICE_ID:-}" \
+    ENV_INSTALLER_DEVICE="${ENV_INSTALLER_DEVICE:-}" \
+    sh "$FIX_DIR/install.sh" "$@"
   )
 }
 
-# Create some dummy steps in the fixture
+# Create a dummy step directly under steps/
 create_step() {
   # create_step <numeric-prefix> <name> <body>
   num="$1"
@@ -104,9 +115,28 @@ create_step() {
 
   cat >"$FIX_DIR/steps/${num}-${name}.sh" <<EOF
 #!/usr/bin/env sh
+set -eu
 $body
 EOF
   chmod +x "$FIX_DIR/steps/${num}-${name}.sh"
+}
+
+# Create a dummy scoped step under steps/<relative-dir>/
+create_scoped_step() {
+  # create_scoped_step <relative-dir> <numeric-prefix> <name> <body>
+  rel_dir="$1"
+  num="$2"
+  name="$3"
+  body="$4"
+
+  mkdir -p "$FIX_DIR/steps/$rel_dir"
+
+  cat >"$FIX_DIR/steps/$rel_dir/${num}-${name}.sh" <<EOF
+#!/usr/bin/env sh
+set -eu
+$body
+EOF
+  chmod +x "$FIX_DIR/steps/$rel_dir/${num}-${name}.sh"
 }
 
 # --------------------------------------------------------------------
@@ -120,20 +150,19 @@ test_list_steps_outputs_expected() {
   create_step "10" "env-info" 'echo "STEP:env-info"'
   create_step "20" "dev-tools" 'echo "STEP:dev-tools"'
 
-  # --list should print "<step>\t<filename>" and NOT run the steps
+  # --list should print "<step>\t<relpath>" and NOT run the steps
   out="$(run_installer --list || true)"
-
   t_block "raw --list output" "$out"
 
   # Filter out the [INFO] log lines; keep only the step list lines
   list_lines="$(printf '%s\n' "$out" | grep -v '^\[INFO\]' || true)"
   t_block "parsed step list" "$list_lines"
 
-  # Expected two lines, with real tabs between step name and filename
+  # Expected two lines, with real tabs between step name and relative path
   expected="$(printf 'env-info\t10-env-info.sh\ndev-tools\t20-dev-tools.sh')"
   assert_eq "$expected" "$list_lines"
 
-  # Also ensure --list did NOT execute the steps (no STEP:... lines anywhere)
+  # Ensure --list did NOT execute the steps (no STEP:... lines anywhere)
   steps_run="$(printf '%s\n' "$out" | grep '^STEP:' || true)"
   [ -z "$steps_run" ] || fail "--list should not execute steps, but saw:\n$steps_run"
 
@@ -150,9 +179,7 @@ test_main_default_runs_all_steps_in_order() {
 
   out="$(run_installer || true)"
 
-  # Extract just the STEP: lines
   steps_run="$(printf '%s\n' "$out" | grep '^STEP:' || true)"
-
   t_block "STEP lines" "$steps_run"
 
   expected="STEP:env-info
@@ -163,8 +190,8 @@ STEP:dev-tools"
   printf '\n'
 }
 
-test_main_runs_only_requested_steps_in_given_order() {
-  t_header "test_main_runs_only_requested_steps_in_given_order"
+test_steps_flag_runs_only_requested_steps_in_given_order() {
+  t_header "test_steps_flag_runs_only_requested_steps_in_given_order"
   setup_fixture
 
   create_step "10" "env-info" 'echo "STEP:env-info"'
@@ -172,7 +199,7 @@ test_main_runs_only_requested_steps_in_given_order() {
   create_step "30" "desktop" 'echo "STEP:desktop"'
 
   # Request steps in non-numeric order: dev-tools then env-info
-  out="$(run_installer dev-tools env-info || true)"
+  out="$(run_installer --steps dev-tools env-info || true)"
 
   steps_run="$(printf '%s\n' "$out" | grep '^STEP:' || true)"
   t_block "STEP lines" "$steps_run"
@@ -185,16 +212,36 @@ STEP:env-info"
   printf '\n'
 }
 
-test_unknown_step_causes_failure() {
-  t_header "test_unknown_step_causes_failure"
+test_positional_args_are_rejected() {
+  t_header "test_positional_args_are_rejected"
   setup_fixture
 
   create_step "10" "env-info" 'echo "STEP:env-info"'
 
-  # Capture stderr & exit code
-  if out="$(run_installer does-not-exist 2>&1)"; then
+  # Non-flag args are no longer accepted; steps must be provided via --steps.
+  if out="$(run_installer env-info 2>&1)"; then
     cleanup_fixture
-    fail "Installer should fail for unknown step"
+    fail "Installer should fail when given positional args (expected a hard error)"
+  fi
+
+  t_block "stderr for positional arg" "$out"
+  assert_in "Unknown argument:" "$out"
+  assert_in "use --steps" "$out"
+
+  cleanup_fixture
+  printf '\n'
+}
+
+test_unknown_step_under_steps_flag_causes_failure() {
+  t_header "test_unknown_step_under_steps_flag_causes_failure"
+  setup_fixture
+
+  create_step "10" "env-info" 'echo "STEP:env-info"'
+
+  # With --steps, an unknown step should fail with "Unknown step: ..."
+  if out="$(run_installer --steps does-not-exist 2>&1)"; then
+    cleanup_fixture
+    fail "Installer should fail for unknown step under --steps"
   fi
 
   t_block "stderr for unknown step" "$out"
@@ -211,11 +258,9 @@ test_logfile_created_and_header_written() {
   # Minimal step to ensure main completes cleanly
   create_step "10" "noop" 'echo "STEP:noop"'
 
-  # Run installer once
   run_installer >/dev/null 2>&1 || fail "Installer run failed unexpectedly"
 
-  # We now expect at least one installer-*.log in LOG_DIR
-  # Pick the newest one (lexicographically last)
+  # Expect at least one installer-*.log in LOG_DIR (one per run)
   log_file="$(ls "$LOG_DIR"/installer-*.log 2>/dev/null | sort | tail -n 1 || true)"
   if [ -z "$log_file" ]; then
     fail "Expected at least one log file matching: $LOG_DIR/installer-*.log"
@@ -231,27 +276,41 @@ test_logfile_created_and_header_written() {
   assert_in "Platform:" "$content"
   assert_in "Distro:" "$content"
   assert_in "Arch:" "$content"
+  assert_in "Device:" "$content"
   assert_in "PKG_MGR:" "$content"
 
   cleanup_fixture
   printf '\n'
 }
 
-test_all_flag_runs_all_steps_in_order() {
-  t_header "test_all_flag_runs_all_steps_in_order"
+test_device_scoped_step_overrides_generic() {
+  t_header "test_device_scoped_step_overrides_generic"
   setup_fixture
 
-  create_step "10" "first" 'echo "STEP:first"'
-  create_step "20" "second" 'echo "STEP:second"'
+  # Pretend we're on a specific device. We set both env vars to match whichever common.sh uses.
+  ENV_INSTALLER_DEVICE_ID="thinkpad-x240"
+  ENV_INSTALLER_DEVICE="thinkpad-x240"
+  export ENV_INSTALLER_DEVICE_ID ENV_INSTALLER_DEVICE
 
-  out="$(run_installer --all || true)"
+  # Same logical step name in both places ("env-info"), device should override generic.
+  create_step "10" "env-info" 'echo "STEP:generic-env-info"'
+  create_scoped_step "devices/thinkpad-x240" "10" "env-info" 'echo "STEP:device-env-info"'
+
+  out="$(run_installer || true)"
 
   steps_run="$(printf '%s\n' "$out" | grep '^STEP:' || true)"
   t_block "STEP lines" "$steps_run"
 
-  expected="STEP:first
-STEP:second"
-  assert_eq "$expected" "$steps_run"
+  # Should run only the overridden step output once (device version), and NOT the generic one.
+  assert_in "STEP:device-env-info" "$steps_run"
+  case "$steps_run" in
+    *"STEP:generic-env-info"*)
+      cleanup_fixture
+      fail "Expected device-scoped step to override generic, but generic step output was present:\n$steps_run"
+      ;;
+    *)
+      : ;;
+  esac
 
   cleanup_fixture
   printf '\n'
@@ -268,10 +327,11 @@ main() {
 
   test_list_steps_outputs_expected
   test_main_default_runs_all_steps_in_order
-  test_main_runs_only_requested_steps_in_given_order
-  test_unknown_step_causes_failure
+  test_steps_flag_runs_only_requested_steps_in_given_order
+  test_positional_args_are_rejected
+  test_unknown_step_under_steps_flag_causes_failure
   test_logfile_created_and_header_written
-  test_all_flag_runs_all_steps_in_order
+  test_device_scoped_step_overrides_generic
 
   printf '────────────────────────────────────────────────────────\n'
   printf ' ALL install.sh TESTS PASSED\n'
