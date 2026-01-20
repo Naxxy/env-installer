@@ -111,11 +111,13 @@ init_logfile() {
   add_comments <<EOF
 Run started at: $RUN_STARTED_AT
 
-Platform:  $PLATFORM
-Distro:    $DISTRO
-Arch:      $ARCH
-Device:    ${DEVICE_ID:-unknown}
-PKG_MGR:   ${PKG_MGR:-none}
+PLATFORM:     $PLATFORM
+DISTRO:       $DISTRO
+ARCH:         $ARCH
+DEVICE_ID:    ${DEVICE_ID:-unknown}
+PKG_MGR:      ${PKG_MGR:-none}
+DEBUG         ${DEBUG:-0}
+LOGFILE       ${LOGFILE:-<unset>}
 
 Steps directory: $STEPS_DIR
 Log directory:   $LOG_DIR
@@ -360,10 +362,10 @@ EOF
 ────────────────────────────────────────────────────────
  env-installer
 ────────────────────────────────────────────────────────
-Platform: $PLATFORM
-Distro:   $DISTRO
-Arch:     $ARCH
-Device:   ${DEVICE_ID:-unknown}
+PLATFORM: $PLATFORM
+DISTRO:   $DISTRO
+ARCH:     $ARCH
+DEVICE:   ${DEVICE_ID:-unknown}
 PKG_MGR:  ${PKG_MGR:-none}
 EOF
 

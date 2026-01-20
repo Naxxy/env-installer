@@ -67,14 +67,6 @@ Behaviour:
   - On Arch/Ubuntu, installs via Brave's official Linux installer script.
   - Proxmox is explicitly skipped.
 
-Environment snapshot:
-  PLATFORM   = ${PLATFORM:-<unset>}
-  DISTRO     = ${DISTRO:-<unset>}
-  ARCH       = ${ARCH:-<unset>}
-  DEVICE_ID  = ${DEVICE_ID:-<unset>}
-  PKG_MGR    = ${PKG_MGR:-<unset>}
-  DEBUG      = ${DEBUG:-0}
-  LOGFILE    = ${LOGFILE:-<unset>}
 EOF
 
 log "$STEP_TITLE: starting (PLATFORM=$PLATFORM, DISTRO=$DISTRO, ARCH=$ARCH, DEVICE_ID=${DEVICE_ID:-unknown}, PKG_MGR=${PKG_MGR:-none})"

@@ -1,8 +1,6 @@
 #!/usr/bin/env sh
 # Step: <HUMAN FRIENDLY TITLE>
 #
-# Filename convention: dddd-<name>.sh (e.g. 0020-install-yt-dlp.sh)
-#
 # This step is intended to be run *only* via install.sh, which is responsible for:
 #   - Detecting PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR.
 #   - Parsing CLI flags (e.g. --debug).
@@ -88,15 +86,6 @@ Behaviour:
       - skip cleanly (exit 0), or
       - fail loudly (exit 1),
     depending on how guards are configured.
-
-Environment snapshot (as passed from install.sh):
-  PLATFORM   = ${PLATFORM:-<unset>}
-  DISTRO     = ${DISTRO:-<unset>}
-  ARCH       = ${ARCH:-<unset>}
-  DEVICE_ID  = ${DEVICE_ID:-<unset>}
-  PKG_MGR    = ${PKG_MGR:-<unset>}
-  DEBUG      = ${DEBUG:-0}
-  LOGFILE    = ${LOGFILE:-<unset>}
 EOF
 
 log "$STEP_TITLE: starting (PLATFORM=$PLATFORM, DISTRO=$DISTRO, ARCH=$ARCH, DEVICE_ID=${DEVICE_ID:-unknown}, PKG_MGR=${PKG_MGR:-none})"

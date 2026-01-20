@@ -56,12 +56,6 @@ Behaviour:
   - If Homebrew is missing, it is installed using the official installer.
   - Non-macOS platforms are skipped cleanly.
 
-Environment snapshot:
-  PLATFORM = ${PLATFORM:-<unset>}
-  DISTRO   = ${DISTRO:-<unset>}
-  ARCH     = ${ARCH:-<unset>}
-  PKG_MGR  = ${PKG_MGR:-<unset>}
-  DEBUG    = ${DEBUG:-false}
 EOF
 
 log "$STEP_TITLE: starting (PLATFORM=$PLATFORM, ARCH=$ARCH)"
