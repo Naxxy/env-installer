@@ -31,10 +31,35 @@ _emit_log_line() {
 }
 
 log() {
-  # Simple structured log to stdout.
+  # Emit a single-line informational log message.
+  #
+  # Writes to stdout, and also to LOGFILE if it exists.
+  # Intended for short, atomic log events (one message per call).
+  #
   # usage:
   #   log "Installing Homebrew..."
   _emit_log_line "INFO" "$*"
+}
+
+log_block() {
+  # Emit a multi-line informational log block.
+  #
+  # Reads lines from stdin and logs each line individually using log().
+  # This is useful for structured headers, separators, or grouped
+  # informational output where preserving line breaks improves readability.
+  #
+  # Each line is treated as a separate INFO log entry.
+  #
+  # usage:
+  #   log_block <<EOF
+  #   ────────────────────────────────────────────────
+  #    STEP: install-homebrew (macos/0010-install-homebrew.sh)
+  #   ────────────────────────────────────────────────
+  #   EOF
+  #
+  while IFS= read -r line; do
+    log "$line"
+  done
 }
 
 warn() {
@@ -153,6 +178,7 @@ run() {
   # usage:
   #   run apt-get update -y
   (
+    PS4='[CMD] '
     set -x
     "$@"
   )

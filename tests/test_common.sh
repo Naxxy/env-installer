@@ -173,6 +173,46 @@ test_log_warn_die_also_write_to_logfile_when_set() {
   t_sep
 }
 
+test_log_block_writes_each_line_to_stdout() {
+  t_header "test_log_block_writes_each_line_to_stdout"
+
+  out="$(log_block <<EOF
+line one
+line two
+EOF
+)"
+  t_block "stdout" "$out"
+
+  assert_in "[INFO] line one" "$out"
+  assert_in "[INFO] line two" "$out"
+  t_sep
+}
+
+test_log_block_also_writes_to_logfile_when_set() {
+  t_header "test_log_block_also_writes_to_logfile_when_set"
+
+  tmp="$(mktemp)"
+  : >"$tmp"
+
+  out="$(LOGFILE="$tmp" log_block <<EOF
+alpha
+beta
+EOF
+)"
+  file="$(cat "$tmp")"
+
+  t_block "stdout" "$out"
+  t_block "logfile" "$file"
+
+  assert_in "[INFO] alpha" "$out"
+  assert_in "[INFO] beta" "$out"
+  assert_in "[INFO] alpha" "$file"
+  assert_in "[INFO] beta" "$file"
+
+  rm -f "$tmp"
+  t_sep
+}
+
 test_require_logfile_success_and_failure() {
   t_header "test_require_logfile_success_and_failure"
 
@@ -255,9 +295,25 @@ test_available_and_first_of() {
 test_run_executes_command() {
   t_header "test_run_executes_command"
 
-  out="$(run printf 'hello-from-run')"
+  tmp_out="$(mktemp)"
+  tmp_err="$(mktemp)"
+
+  # stdout should contain the command output; stderr may contain xtrace lines.
+  run printf 'hello-from-run' >"$tmp_out" 2>"$tmp_err" || fail "run returned non-zero"
+
+  out="$(cat "$tmp_out")"
+  err="$(cat "$tmp_err")"
+
   t_kv "stdout" "$out"
+  t_block "stderr" "$err"
+
   assert_eq "hello-from-run" "$out"
+
+  # If you set PS4='[CMD] ' in run(), the trace should look like [CMD] ...
+  # This is optional—keep it if you want to lock in the new behaviour.
+  # assert_in "[CMD]" "$err"
+
+  rm -f "$tmp_out" "$tmp_err"
   t_sep
 }
 
@@ -539,6 +595,8 @@ main() {
   test_log_and_warn_do_not_crash
   test_die_exits_non_zero
   test_log_warn_die_also_write_to_logfile_when_set
+  test_log_block_writes_each_line_to_stdout
+  test_log_block_also_writes_to_logfile_when_set
   test_require_logfile_success_and_failure
   test_add_title_with_explicit_title
   test_add_comments_appends_stdin
