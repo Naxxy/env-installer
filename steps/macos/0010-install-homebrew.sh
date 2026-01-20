@@ -1,18 +1,13 @@
 #!/usr/bin/env sh
 # Step: install-homebrew
 #
-# This step is intended to be run *only* via install.sh, which is responsible for:
-#   - Detecting PLATFORM, DISTRO, ARCH, PKG_MGR.
-#   - Initialising a per-run LOGFILE and passing it to this step.
+# Installs Homebrew (macOS package manager).
 #
-# Assumptions (passed from install.sh):
-#   - PLATFORM, DISTRO, ARCH, PKG_MGR, LOGFILE, STEP_NAME, DEBUG are exported.
-#   - LOGFILE already exists and is writable.
+# Supported:
+#   - macOS
 #
-# Responsibilities:
-#   - Log a clear step header + description into LOGFILE.
-#   - Ensure Homebrew is installed on macOS.
-#   - Be idempotent (no changes if already installed).
+# Skipped:
+#   - linux
 
 set -eu
 

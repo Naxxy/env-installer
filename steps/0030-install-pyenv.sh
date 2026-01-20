@@ -1,26 +1,14 @@
 #!/usr/bin/env sh
 # Step: install-pyenv
 #
-# This step is intended to be run *only* via install.sh, which is responsible for:
-#   - Detecting PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR.
-#   - Parsing CLI flags (e.g. --debug).
-#   - Initialising a per-run LOGFILE and passing it to this step.
+# Installs pyenv (Python version manager).
 #
-# Assumptions (passed from install.sh):
-#   - PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR, LOGFILE, STEP_NAME are exported.
-#   - DEBUG is exported and set to "1" or "0".
-#   - LOGFILE already exists and is writable.
+# Supported:
+#   - macOS
+#   - Linux: arch, ubuntu
 #
-# Responsibilities:
-#   - Log a clear step header + description into LOGFILE.
-#   - Ensure pyenv is installed.
-#   - Be idempotent (no changes if already in desired state).
-#
-# Notes:
-#   - On Linux, pyenv may be installed either via system package manager (Arch)
-#     or via the official installer (Ubuntu).
-#   - This step does NOT modify your shell rc files automatically. It will log
-#     the recommended init lines to add.
+# Skipped:
+#   - proxmox
 
 set -eu
 

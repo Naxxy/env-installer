@@ -1,26 +1,13 @@
 #!/usr/bin/env sh
 # Step: install-brave-browser
 #
-# This step is intended to be run *only* via install.sh, which is responsible for:
-#   - Detecting PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR.
-#   - Parsing CLI flags (e.g. --debug).
-#   - Initialising a per-run LOGFILE and passing it to this step.
-#
-# Assumptions (passed from install.sh):
-#   - PLATFORM, DISTRO, ARCH, DEVICE_ID, PKG_MGR, LOGFILE, STEP_NAME are exported.
-#   - DEBUG is exported and set to "1" or "0".
-#   - LOGFILE already exists and is writable.
-#
-# Responsibilities:
-#   - Log a clear step header + description into LOGFILE.
-#   - Ensure Brave Browser is installed.
-#   - Be idempotent (no changes if already in desired state).
+# Installs Brave Browser.
 #
 # Supported:
-#   - macos (brew cask)
-#   - linux: arch, ubuntu
+#   - macOS
+#   - Linux: arch, ubuntu
 #
-# Explicitly NOT supported:
+# Skipped:
 #   - proxmox
 
 set -eu
