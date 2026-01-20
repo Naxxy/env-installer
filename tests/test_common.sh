@@ -101,6 +101,54 @@ test_die_exits_non_zero() {
   printf '\n'
 }
 
+test_log_warn_die_also_write_to_logfile_when_set() {
+  t_header "test_log_warn_die_also_write_to_logfile_when_set"
+
+  tmp="$(mktemp)"
+  : >"$tmp"
+
+  # log -> stdout + logfile
+  out_log="$(LOGFILE="$tmp" log "hello file" 2>/dev/null || true)"
+  t_block "log stdout" "$out_log"
+
+  file_after_log="$(cat "$tmp")"
+  t_block "logfile after log" "$file_after_log"
+
+  assert_in "INFO" "$out_log"
+  assert_in "hello file" "$out_log"
+  assert_in "INFO" "$file_after_log"
+  assert_in "hello file" "$file_after_log"
+
+  # warn -> stderr + logfile
+  out_warn="$(LOGFILE="$tmp" warn "warn file" 2>&1 1>/dev/null || true)"
+  t_block "warn stderr" "$out_warn"
+
+  file_after_warn="$(cat "$tmp")"
+  t_block "logfile after warn" "$file_after_warn"
+
+  assert_in "WARN" "$out_warn"
+  assert_in "warn file" "$out_warn"
+  assert_in "WARN" "$file_after_warn"
+  assert_in "warn file" "$file_after_warn"
+
+  # die -> stderr + logfile + non-zero
+  if out_die="$(LOGFILE="$tmp" sh -c ". \"$ROOT_DIR/lib/common.sh\"; LOGFILE=\"$tmp\"; die \"die file\"" 2>&1)"; then
+    fail "die did not exit non-zero"
+  fi
+  t_block "die stderr" "$out_die"
+
+  file_after_die="$(cat "$tmp")"
+  t_block "logfile after die" "$file_after_die"
+
+  assert_in "ERR" "$out_die"
+  assert_in "die file" "$out_die"
+  assert_in "ERR" "$file_after_die"
+  assert_in "die file" "$file_after_die"
+
+  rm -f "$tmp"
+  printf '\n'
+}
+
 test_require_logfile_success_and_failure() {
   t_header "test_require_logfile_success_and_failure"
 
@@ -408,6 +456,7 @@ main() {
 
   test_log_and_warn_do_not_crash
   test_die_exits_non_zero
+  test_log_warn_die_also_write_to_logfile_when_set
   test_require_logfile_success_and_failure
   test_add_title_with_explicit_title
   test_add_comments_appends_stdin

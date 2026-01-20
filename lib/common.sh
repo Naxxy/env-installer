@@ -15,18 +15,33 @@ set -eu
 
 # ---- logging / errors -------------------------------------------------------
 
+_emit_log_line() {
+  # $1 = level (INFO | WARN | ERR)
+  # $2 = message
+  _level="$1"
+  _msg="$2"
+
+  # Always emit to terminal
+  printf '[%s] %s\n' "$_level" "$_msg"
+
+  # Also emit to LOGFILE if it exists and is a regular file
+  if [ -n "${LOGFILE:-}" ] && [ -f "$LOGFILE" ]; then
+    printf '[%s] %s\n' "$_level" "$_msg" >>"$LOGFILE"
+  fi
+}
+
 log() {
   # Simple structured log to stdout.
   # usage:
   #   log "Installing Homebrew..."
-  printf '[%s] %s\n' "INFO" "$*"
+  _emit_log_line "INFO" "$*"
 }
 
 warn() {
   # Warning to stderr (non-fatal).
   # usage:
   #   warn "Homebrew not found; attempting fresh install."
-  printf '[%s] %s\n' "WARN" "$*" >&2
+  _emit_log_line "WARN" "$*" >&2
 }
 
 die() {
@@ -34,7 +49,7 @@ die() {
   # Call this when the script cannot safely continue.
   # usage:
   #   die "Unsupported platform: $PLATFORM"
-  printf '[%s] %s\n' "ERR" "$*" >&2
+  _emit_log_line "ERR" "$*" >&2
   exit 1
 }
 
