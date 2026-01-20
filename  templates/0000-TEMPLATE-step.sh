@@ -134,6 +134,20 @@ log_validation_details() {
 # 3) Guards / requirements (PLATFORM / DISTRO / ARCH / DEVICE_ID / PKG_MGR)
 #    DELETE THIS SECTION IF NOT NEEDED
 # --------------------------------------------------------------------
+
+# Default safety guard:
+#   Skip this step on Proxmox hosts unless explicitly overridden.
+#
+# Rationale:
+#   - Proxmox hosts are infrastructure, not user environments.
+#   - Accidental installs (brew, browsers, dev tools) are dangerous.
+#   - Device- or host-specific steps can remove or override this guard.
+
+if [ "${DISTRO:-}" = "proxmox" ]; then
+  log "Skipping: <THING> is not installed on Proxmox hosts by default."
+  exit 0
+fi
+
 # Guards are "safety rails". Even if this script is in a scoped directory,
 # keep guards if the step is risky or device-specific.
 #
