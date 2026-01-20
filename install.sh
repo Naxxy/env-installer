@@ -2,15 +2,28 @@
 # env-installer: main entrypoint
 #
 # Responsibilities of this script:
-#   - Detect basic environment (platform, distro, arch, package manager).
+#   - Detect basic environment (platform, distro, arch, device id, package manager).
 #   - Initialise a per-run LOGFILE and write a header for this run.
-#   - Discover "step" scripts in ./steps (e.g. 10-env-info.sh).
+#   - Discover "step" scripts under steps/ (including scoped subdirs).
 #   - Run all steps (in order) or only named steps, based on CLI args.
 #
+# Step discovery supports the following (when present):
+#   steps/*.sh
+#   steps/<platform>/*.sh
+#   steps/<platform>/<distro>/*.sh
+#   steps/<platform>/arch/<arch>/*.sh
+#   steps/devices/<device-id>/*.sh
+#
+# Precedence (last wins) when two scripts define the same step name:
+#   generic < platform < distro < arch < device
+#
 # Real work happens in step scripts, which can:
-#   - Source lib/common.sh
-#   - Assume LOGFILE exists and is writable
-#   - Use require_logfile / add_title / add_comments for their own logging.
+#   - Assume LOGFILE exists and is writable (installer sets it up)
+#   - Use add_title / add_comments for their own logging
+#
+# CLI defaults:
+#   - No flags (and no args) means: run ALL steps
+#   - Use --steps to run only selected steps (in the order provided)
 
 set -eu
 
@@ -29,12 +42,6 @@ STEPS_DIR="$ROOT_DIR/steps"
 # --------------------------------------------------------------------
 # Load shared helpers
 # --------------------------------------------------------------------
-# common.sh defines:
-#   - log, warn, die
-#   - detect_platform, detect_arch, detect_distro, detect_pkg_manager
-#   - init_sudo, as_root, ensure_packages
-#   - require_logfile, add_title, add_comments
-#
 # shellcheck source=lib/common.sh
 . "$ROOT_DIR/lib/common.sh"
 
@@ -62,6 +69,11 @@ STEPS_DIR="$ROOT_DIR/steps"
 
 init_logfile() {
   # Decide on log directory (ENV_INSTALLER_LOG_DIR overrides everything).
+  #
+  # Preference order:
+  #   1) ENV_INSTALLER_LOG_DIR (explicit override)
+  #   2) XDG_STATE_HOME (preferred on modern Linux)
+  #   3) ~/.local/state (reasonable fallback across Linux/macOS)
   if [ -n "${ENV_INSTALLER_LOG_DIR:-}" ]; then
     LOG_DIR="$ENV_INSTALLER_LOG_DIR"
   elif [ -n "${XDG_STATE_HOME:-}" ]; then
@@ -72,30 +84,31 @@ init_logfile() {
 
   mkdir -p "$LOG_DIR"
 
-  # Per-run timestamp for both header and filename.
-  # Format chosen is filename-safe and lexicographically sortable.
+  # RUN_ID is filename-friendly and sorts by time. Include timezone offset.
+  # Example: 20260120T123456+0800
   RUN_STARTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   RUN_ID="$(date '+%Y%m%dT%H%M%S%z')"
 
   LOGFILE="$LOG_DIR/installer-$RUN_ID.log"
 
-  # Create an empty file for this run.
+  # Create/truncate, then require it exists.
   : >"$LOGFILE"
 
   # Sanity check: this should never fail now.
   require_logfile
 
-  # Visually distinct header for this run.
+  # Add a run header so each logfile is self-describing.
   add_title "env-installer run ($RUN_STARTED_AT)"
 
   # Free-form details: environment snapshot before any steps run.
   add_comments <<EOF
 Run started at: $RUN_STARTED_AT
 
-Platform: $PLATFORM
-Distro:   $DISTRO
-Arch:     $ARCH
-PKG_MGR:  ${PKG_MGR:-none}
+Platform:  $PLATFORM
+Distro:    $DISTRO
+Arch:      $ARCH
+Device:    ${DEVICE_ID:-unknown}
+PKG_MGR:   ${PKG_MGR:-none}
 
 Steps directory: $STEPS_DIR
 Log directory:   $LOG_DIR
@@ -108,32 +121,36 @@ EOF
 # --------------------------------------------------------------------
 usage() {
   cat <<EOF
-Usage: $0 [--all] [--list] [step ...]
+Usage: $0 [--list] [--steps step1 step2 ...] [--all]
 
 Options:
-  --all        Run all steps (in numeric order based on filename prefix).
-  --list       List available steps and exit.
-  -h, --help   Show this help.
+  --list              List available steps and exit.
+  --steps <step...>   Run only the listed steps, in the order provided.
+  --all               Run all steps (in numeric order based on filename prefix).
+  -h, --help          Show this help.
 
-If no steps and no --all are provided, the default is to run all steps.
+Defaults:
+  - If no flags are provided, ALL steps are run.
 
 Examples:
-  # Run all steps
+  # Run all steps (default)
   $0
 
-  # List known steps
+  # List available steps
   $0 --list
 
-  # Run a single step named "env-info" (from 10-env-info.sh)
-  $0 env-info
+  # Run only selected steps (in the order given)
+  $0 --steps env-info dev-tools
 
-  # Run multiple steps in a specific order
-  $0 env-info dev-tools desktop
+Notes:
+  - Step names come from filenames like: 010-env-info.sh -> "env-info"
+  - Scoped directories can override generic steps:
+      steps/ < steps/\$PLATFORM < steps/\$PLATFORM/\$DISTRO < steps/\$PLATFORM/arch/\$ARCH < steps/devices/\$DEVICE_ID
 EOF
 }
 
 # --------------------------------------------------------------------
-# Step discovery helpers
+# Step discovery
 # --------------------------------------------------------------------
 
 # find_step_files
@@ -227,9 +244,11 @@ main() {
   detect_arch
   detect_distro
   detect_pkg_manager
+  detect_device_id
   init_sudo
 
-  log "Platform: $PLATFORM, Distro: $DISTRO, Arch: $ARCH, PKG_MGR: ${PKG_MGR:-none}"
+  # Emit an initial terminal line (also goes to LOGFILE after init_logfile).
+  log "Platform: $PLATFORM, Distro: $DISTRO, Arch: $ARCH, Device: ${DEVICE_ID:-unknown}, PKG_MGR: ${PKG_MGR:-none}"
 
   # 2. Initialise the per-run LOGFILE and write a run header.
   #    After this, steps can safely assume LOGFILE exists and is writable.
