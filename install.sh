@@ -28,6 +28,13 @@
 set -eu
 
 # --------------------------------------------------------------------
+# Debug (hardcoded for now)
+# --------------------------------------------------------------------
+# When DEBUG=1, the installer will emit additional diagnostic output.
+# Keep this set to 0 for normal runs.
+DEBUG=1
+
+# --------------------------------------------------------------------
 # Repository root resolution
 # --------------------------------------------------------------------
 # ROOT_DIR is the absolute path to the directory containing this script.
@@ -193,7 +200,7 @@ find_step_files() {
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir" 2>/dev/null || true' EXIT
 
-  # Build a "latest wins" mapping by writing each step's chosen relpath into a temp file.
+  # Build a "last wins" mapping by writing each step's chosen relpath into a temp file.
   # Using files avoids needing associative arrays (POSIX sh portability).
   for root in $(step_roots); do
     find "$root" -maxdepth 1 -type f -name '*.sh' 2>/dev/null | while IFS= read -r abs; do
@@ -203,6 +210,30 @@ find_step_files() {
       printf '%s\n' "$rel" >"$tmp_dir/$step"
     done
   done
+
+  # IMPORTANT:
+  # This function's stdout is consumed by command substitution:
+  #   for rel in $(find_step_files); do ...
+  # Therefore stdout MUST remain a clean list of step relpaths.
+  # Send DEBUG output to stderr so it cannot pollute the list.
+  if [ "${DEBUG:-0}" = "1" ]; then
+    log_block 1>&2 <<EOF
+
+DEBUG: find_step_files resolved mapping (last wins)
+$(for f in "$tmp_dir"/*; do
+    [ -f "$f" ] || continue
+    printf '  %s -> %s\n' "$(basename "$f")" "$(cat "$f")"
+  done)
+
+EOF
+
+    log_block 1>&2 <<EOF
+
+DEBUG: step_roots (search order)
+$(step_roots | sed 's/^/  - /')
+
+EOF
+  fi
 
   # Emit "<basename>\t<relpath>" so we can sort by basename (numeric prefix),
   # then print "<relpath>" (steps-relative path).
@@ -263,12 +294,27 @@ run_step() {
     base="$(basename "$rel")"
     name="$(filename_to_step "$base")"
     if [ "$name" = "$step" ]; then
-      log "=== Running step: $step ($rel) ==="
+      log_block <<EOF
+
+────────────────────────────────────────────────────────
+ STEP: $step ($rel)
+────────────────────────────────────────────────────────
+EOF
+
+      if [ "${DEBUG:-0}" = "1" ]; then
+        log "DEBUG: run_step selected file: $rel"
+      fi
+
       STEP_NAME="$step" \
         PLATFORM="$PLATFORM" DISTRO="$DISTRO" ARCH="$ARCH" DEVICE_ID="${DEVICE_ID:-unknown}" \
         PKG_MGR="$PKG_MGR" SUDO="${SUDO:-}" LOGFILE="$LOGFILE" \
         sh "$STEPS_DIR/$rel"
-      log "=== Finished step: $step ==="
+
+      log_block <<EOF
+────────────────────────────────────────────────────────
+ DONE: $step
+────────────────────────────────────────────────────────
+EOF
       return 0
     fi
   done
@@ -290,13 +336,36 @@ main() {
   detect_device_id
   init_sudo
 
+  if [ "${DEBUG:-0}" = "1" ]; then
+    log_block <<EOF
+
+DEBUG: Environment detection
+  PLATFORM=$PLATFORM
+  DISTRO=$DISTRO
+  ARCH=$ARCH
+  DEVICE_ID=${DEVICE_ID:-<unset>}
+  PKG_MGR=${PKG_MGR:-none}
+EOF
+  fi
+
   # Emit an initial terminal line (also goes to LOGFILE after init_logfile).
-  log "Platform: $PLATFORM, Distro: $DISTRO, Arch: $ARCH, Device: ${DEVICE_ID:-unknown}, PKG_MGR: ${PKG_MGR:-none}"
+  log_block <<EOF
+
+────────────────────────────────────────────────────────
+ env-installer
+────────────────────────────────────────────────────────
+Platform: $PLATFORM
+Distro:   $DISTRO
+Arch:     $ARCH
+Device:   ${DEVICE_ID:-unknown}
+PKG_MGR:  ${PKG_MGR:-none}
+EOF
 
   # 2. Initialise the per-run LOGFILE and write a run header.
   #    After this, steps can safely assume LOGFILE exists and is writable.
   init_logfile
   log "Logging to: $LOGFILE"
+  log ""
 
   RUN_ALL=true
   STEPS=""
