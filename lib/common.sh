@@ -303,15 +303,12 @@ as_root() {
 
 ensure_packages() {
   # Install the given packages using the detected package manager.
-  # This function is intentionally minimal in v0.
+  # Safe to call multiple times; package managers handle idempotency.
   #
-  # It is safe to call multiple times: package managers handle idempotency.
-  # In higher-level scripts, you can wrap this with distro-specific defaults.
-  #
-  # usage:
-  #   detect_platform
-  #   detect_pkg_manager
-  #   ensure_packages git curl
+  # Returns:
+  #   0  - packages installed or already present
+  #   1  - no supported package manager available
+
   [ "$#" -gt 0 ] || return 0
 
   case "${PKG_MGR:-none}" in
@@ -327,9 +324,11 @@ ensure_packages() {
     ;;
   none)
     warn "No supported package manager detected; cannot install: $*"
+    return 1
     ;;
   *)
     warn "Unknown PKG_MGR='$PKG_MGR'; cannot install: $*"
+    return 1
     ;;
   esac
 }

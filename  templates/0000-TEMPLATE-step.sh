@@ -125,6 +125,13 @@ log_validation_details() {
 #   die "Cannot install <THING> automatically."
 # fi
 
+# Example: attempt ensure_packages, skip if it cannot be used
+# (ensure_packages returns non-zero when PKG_MGR is none/unknown)
+# if ! ensure_packages <pkg-name> <pkg-name-2>; then
+#   log "Skipping: ensure_packages could not install <THING> (PKG_MGR=${PKG_MGR:-none})."
+#   exit 0
+# fi
+
 # --------------------------------------------------------------------
 # 4) Idempotency check (desired state)
 # --------------------------------------------------------------------

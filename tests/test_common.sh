@@ -432,7 +432,9 @@ test_ensure_packages_with_none_does_not_crash() {
     WARNINGS="$WARNINGS|$*"
   }
 
-  ensure_packages foo || fail "ensure_packages should not fail when PKG_MGR=none"
+  if ensure_packages foo; then
+    fail "ensure_packages should return non-zero when PKG_MGR=none"
+  fi
 
   calls_pretty="${CALLS#|}"
   warns_pretty="${WARNINGS#|}"
@@ -442,6 +444,25 @@ test_ensure_packages_with_none_does_not_crash() {
 
   [ -z "$calls_pretty" ] || fail "run() should not be called when PKG_MGR=none"
   assert_in "No supported package manager detected" "$warns_pretty"
+  printf '\n'
+}
+
+test_ensure_packages_with_unknown_returns_non_zero() {
+  t_header "test_ensure_packages_with_unknown_returns_non_zero"
+
+  PKG_MGR="totally-unknown"
+  CALLS=""
+  WARNINGS=""
+
+  run() { CALLS="$CALLS|$*"; }
+  warn() { WARNINGS="$WARNINGS|$*"; }
+
+  if ensure_packages foo; then
+    fail "ensure_packages should return non-zero when PKG_MGR is unknown"
+  fi
+
+  [ -z "${CALLS#|}" ] || fail "run() should not be called when PKG_MGR is unknown"
+  assert_in "Unknown PKG_MGR" "${WARNINGS#|}"
   printf '\n'
 }
 
@@ -472,6 +493,7 @@ main() {
   test_ensure_packages_with_pacman_mocked
   test_ensure_packages_with_brew_mocked
   test_ensure_packages_with_none_does_not_crash
+  test_ensure_packages_with_unknown_returns_non_zero
 
   printf '────────────────────────────────────────────────────────\n'
   printf ' ALL TESTS PASSED\n'
