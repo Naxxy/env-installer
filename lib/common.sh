@@ -3,10 +3,10 @@
 # Intent: keep each helper small and obvious, so behaviour is easy to verify.
 # These helpers are meant to be sourced from individual install scripts, e.g.:
 #
-#   . "$(dirname "$0")/helpers.sh"
+#   . "$ROOT_DIR/lib/common.sh"
 #
 # Typical flow inside an installer:
-#   - detect_platform / detect_arch / detect_distro / detect_pkg_manager
+#   - detect_platform / detect_arch / detect_distro / detect_pkg_manager / detect_device_id
 #   - init_sudo
 #   - (optionally) set up LOGFILE and write a title + description block
 #   - use ensure_packages / as_root / log / warn / die as needed
@@ -168,11 +168,9 @@ detect_platform() {
   #   detect_platform
   #   [ "$PLATFORM" = "macos" ] && ...
   case "$(uname -s)" in
-  Darwin) PLATFORM="macos" ;;
-  Linux) PLATFORM="linux" ;;
-  *)
-    die "Unsupported platform: $(uname -s)"
-    ;;
+    Darwin) PLATFORM="macos" ;;
+    Linux)  PLATFORM="linux" ;;
+    *) die "Unsupported platform: $(uname -s)" ;;
   esac
 }
 
@@ -184,12 +182,12 @@ detect_arch() {
   #   detect_arch
   #   case "$ARCH" in x86_64) ... ;; esac
   case "$(uname -m)" in
-  x86_64 | amd64) ARCH="x86_64" ;;
-  aarch64 | arm64) ARCH="aarch64" ;;
-  *)
-    ARCH="$(uname -m)"
-    warn "Unknown architecture $(uname -m); using raw value: $ARCH"
-    ;;
+    x86_64 | amd64) ARCH="x86_64" ;;
+    aarch64 | arm64) ARCH="aarch64" ;;
+    *)
+      ARCH="$(uname -m)"
+      warn "Unknown architecture $(uname -m); using raw value: $ARCH"
+      ;;
   esac
 }
 
@@ -206,7 +204,7 @@ detect_distro() {
   #
   if [ "${PLATFORM:-}" = "macos" ]; then
     DISTRO="macos"
-    return
+    return 0
   fi
 
   if [ -f /etc/os-release ]; then
@@ -234,6 +232,8 @@ detect_distro() {
     DISTRO="linux-unknown"
     warn "No /etc/os-release found; using DISTRO='$DISTRO'"
   fi
+
+  return 0
 }
 
 detect_pkg_manager() {
@@ -253,7 +253,7 @@ detect_pkg_manager() {
     else
       PKG_MGR="none"
     fi
-    return
+    return 0
   fi
 
   if available apt-get; then
@@ -262,6 +262,107 @@ detect_pkg_manager() {
     PKG_MGR="pacman"
   else
     PKG_MGR="none"
+  fi
+
+  return 0
+}
+
+# ---- device detection -------------------------------------------------------
+
+_slugify_device_id() {
+  # Normalise a string into lowercase kebab-case.
+  # Example: "LENOVO ThinkPad X240" -> "lenovo-thinkpad-x240"
+  #
+  # Note: keep this POSIX-sh compatible.
+  printf '%s' "${1:-}" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
+}
+
+detect_device_id() {
+  # Sets DEVICE_ID to a stable-ish identifier for the current machine.
+  #
+  # Priority:
+  #   1) ENV_INSTALLER_DEVICE_ID (explicit override)
+  #   2) Linux DMI info (/sys/devices/virtual/dmi/id/*)
+  #   3) macOS Model Identifier (system_profiler)
+  #   4) Fallback: "unknown"
+  #
+  # This is meant for *device-specific steps* (e.g. ThinkPad X240 tweaks).
+  # It is not used for general platform/distro branching.
+
+  if [ -n "${ENV_INSTALLER_DEVICE_ID:-}" ]; then
+    DEVICE_ID="$(_slugify_device_id "$ENV_INSTALLER_DEVICE_ID")"
+    return 0
+  fi
+
+  case "${PLATFORM:-}" in
+    linux)
+      # Best-effort: vendor + product name from DMI.
+      if [ -r /sys/devices/virtual/dmi/id/product_name ]; then
+        _pn="$(cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null || true)"
+        _sv=""
+        if [ -r /sys/devices/virtual/dmi/id/sys_vendor ]; then
+          _sv="$(cat /sys/devices/virtual/dmi/id/sys_vendor 2>/dev/null || true)"
+        fi
+
+        if [ -n "$_sv" ] && [ -n "$_pn" ]; then
+          DEVICE_ID="$(_slugify_device_id "$_sv $_pn")"
+          return 0
+        fi
+        if [ -n "$_pn" ]; then
+          DEVICE_ID="$(_slugify_device_id "$_pn")"
+          return 0
+        fi
+      fi
+
+      DEVICE_ID="unknown"
+      warn "Could not determine DEVICE_ID from DMI; using DEVICE_ID='$DEVICE_ID'"
+      ;;
+    macos)
+      # Example: "Model Identifier: Macmini9,1"
+      if available system_profiler; then
+        _mi="$(
+          system_profiler SPHardwareDataType 2>/dev/null \
+            | awk -F': ' '/Model Identifier/ {print $2; exit}' \
+            || true
+        )"
+        if [ -n "$_mi" ]; then
+          DEVICE_ID="$(_slugify_device_id "$_mi")"
+          return 0
+        fi
+      fi
+
+      DEVICE_ID="unknown"
+      warn "Could not determine DEVICE_ID on macOS; using DEVICE_ID='$DEVICE_ID'"
+      ;;
+    *)
+      DEVICE_ID="unknown"
+      warn "PLATFORM not set; using DEVICE_ID='$DEVICE_ID'"
+      ;;
+  esac
+
+  return 0
+}
+
+require_device() {
+  # Guard for device-specific steps.
+  #
+  # Usage:
+  #   require_device "thinkpad-x240"
+  #
+  # Behaviour:
+  #   - If DEVICE_ID matches: continue
+  #   - Otherwise: log and exit 0 (soft skip)
+  #
+  # Rationale:
+  #   Device-specific steps should not error on other machines.
+  _required="${1:-}"
+  [ -n "$_required" ] || die "require_device requires a device id argument"
+
+  if [ "${DEVICE_ID:-unknown}" != "$_required" ]; then
+    log "Skipping: requires DEVICE_ID='$_required' (current='${DEVICE_ID:-unknown}')."
+    exit 0
   fi
 }
 
@@ -306,29 +407,30 @@ ensure_packages() {
   # Safe to call multiple times; package managers handle idempotency.
   #
   # Returns:
-  #   0  - packages installed or already present
-  #   1  - no supported package manager available
-
+  #   0 - attempted install via supported PKG_MGR (or no args)
+  #   1 - cannot install (PKG_MGR none/unknown)
   [ "$#" -gt 0 ] || return 0
 
   case "${PKG_MGR:-none}" in
-  apt)
-    as_root apt-get update -y
-    as_root apt-get install -y "$@"
-    ;;
-  pacman)
-    as_root pacman -Sy --needed --noconfirm "$@"
-    ;;
-  brew)
-    run brew install "$@"
-    ;;
-  none)
-    warn "No supported package manager detected; cannot install: $*"
-    return 1
-    ;;
-  *)
-    warn "Unknown PKG_MGR='$PKG_MGR'; cannot install: $*"
-    return 1
-    ;;
+    apt)
+      as_root apt-get update -y
+      as_root apt-get install -y "$@"
+      ;;
+    pacman)
+      as_root pacman -Sy --needed --noconfirm "$@"
+      ;;
+    brew)
+      run brew install "$@"
+      ;;
+    none)
+      warn "No supported package manager detected; cannot install: $*"
+      return 1
+      ;;
+    *)
+      warn "Unknown PKG_MGR='${PKG_MGR:-}'; cannot install: $*"
+      return 1
+      ;;
   esac
+
+  return 0
 }
