@@ -5,20 +5,23 @@
       - tlp
       - tlp-rdw
     state: present
+  when: is_thinkpad | bool
 - name: Install firmware tools
   become: true
   apt:
     name:
       - fwupd
     state: present
+  when: is_thinkpad | bool
 - name: Ensure xinput is installed (required for touchscreen control)
   become: true
   apt:
     name: xinput
     state: present
+  when: is_thinkpad | bool
   when:
     - ansible_facts['os_family'] == 'Debian'
-    - ansible_facts['product_name'] is search("ThinkPad")
+    - is_thinkpad | bool
 - name: Disable touchscreen on ThinkPad
   become: false
   shell: |
@@ -26,9 +29,9 @@
     if [ -n "$id" ]; then
       xinput disable "$id"
     fi
-  when:
+  when: 
     - thinkpad_disable_touchscreen | default(false)
-    - ansible_facts['product_name'] is search("ThinkPad")
+    - is_thinkpad | bool
 - name: Enable touchscreen on ThinkPad
   become: false
   shell: |
@@ -38,4 +41,4 @@
     fi
   when:
     - not (thinkpad_disable_touchscreen | default(false))
-    - ansible_facts['product_name'] is search("ThinkPad")
+    - is_thinkpad | bool

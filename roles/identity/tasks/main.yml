@@ -1,0 +1,70 @@
+- name: Read device_id marker (Linux) if present
+  become: true
+  ansible.builtin.slurp:
+    src: /etc/env-installer/device_id
+  register: marker_device_id
+  ignore_errors: true
+  when: ansible_facts.os_family != "Darwin"
+
+- name: Read device_family marker (Linux) if present
+  become: true
+  ansible.builtin.slurp:
+    src: /etc/env-installer/device_family
+  register: marker_device_family
+  ignore_errors: true
+  when: ansible_facts.os_family != "Darwin"
+
+- name: Compute device_id with precedence (inventory -> marker -> fallback)
+  ansible.builtin.set_fact:
+    resolved_device_id: >-
+      {{
+        (device_id | default('')) | trim
+        if (device_id is defined and (device_id | string | trim) != '')
+        else
+          (
+            (marker_device_id.content | b64decode | trim)
+            if (marker_device_id is defined and marker_device_id.content is defined)
+            else
+              'unknown'
+          )
+      }}
+
+- name: Compute device_family with precedence (inventory -> marker -> facts fallback)
+  ansible.builtin.set_fact:
+    resolved_device_family: >-
+      {{
+        (device_family | default('')) | trim
+        if (device_family is defined and (device_family | string | trim) != '')
+        else
+          (
+            (marker_device_family.content | b64decode | trim)
+            if (marker_device_family is defined and marker_device_family.content is defined)
+            else
+              (
+                'thinkpad'
+                if (
+                  (ansible_facts.system_vendor | default('') | lower is search('lenovo'))
+                  and
+                  (ansible_facts.product_name | default('') | lower is search('thinkpad'))
+                )
+                else
+                  'unknown'
+              )
+          )
+      }}
+
+- name: Derive is_thinkpad from resolved identity
+  ansible.builtin.set_fact:
+    is_thinkpad: >-
+      {{
+        (resolved_device_family | lower) == 'thinkpad'
+        or
+        (resolved_device_id | lower) is search('thinkpad')
+      }}
+
+- name: Debug identity
+  ansible.builtin.debug:
+    msg:
+      resolved_device_id: "{{ resolved_device_id }}"
+      resolved_device_family: "{{ resolved_device_family }}"
+      is_thinkpad: "{{ is_thinkpad }}"

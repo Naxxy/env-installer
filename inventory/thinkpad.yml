@@ -1,0 +1,7 @@
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      device_id: thinkpad-x240
+      device_family: thinkpad
+      touchscreen_default_enabled: false
