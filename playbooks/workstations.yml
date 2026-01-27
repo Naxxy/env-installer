@@ -1,18 +1,8 @@
-# playbooks/workstations.yml
-- name: Minimal local workstation test
+- name: Configure local workstation
   hosts: localhost
-  become: true
+  connection: local
+  gather_facts: true
+  become: false
 
-  tasks:
-    - name: Show system facts
-      debug:
-        msg:
-          - "OS: {{ ansible_facts['distribution'] }}"
-          - "Version: {{ ansible_facts['distribution_version'] }}"
-          - "Arch: {{ ansible_facts['architecture'] }}"
-
-    - name: Ensure curl is installed (Ubuntu/Kubuntu)
-      apt:
-        name: curl
-        state: present
-      when: ansible_facts['os_family'] == 'Debian'
+  roles:
+    - base

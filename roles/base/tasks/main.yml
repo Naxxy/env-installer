@@ -1,0 +1,16 @@
+- name: Install base packages (Kubuntu)
+  become: true
+  apt:
+    name:
+      - curl
+      - git
+      - ca-certificates
+      - build-essential
+      - unzip
+      - zip
+      - jq
+      - htop
+      - tmux
+    state: present
+    update_cache: true
+  when: ansible_facts['os_family'] == 'Debian'
