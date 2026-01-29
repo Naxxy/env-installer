@@ -1,4 +1,5 @@
 # roles/netbird/tasks/configure.yml
+
 - name: Ensure netbird service is enabled and started (Linux)
   become: true
   ansible.builtin.service:

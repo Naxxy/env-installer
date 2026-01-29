@@ -4,9 +4,11 @@
 - name: Install netbird (platform)
   ansible.builtin.include_tasks: "{{ env_pkg_family }}.yml"
 
-# Keep the skeleton honest:
-# - Linux gets basic "up" enrollment automation.
-# - macOS is install-only for now (manual enrollment or a future macOS-specific implementation).
-- name: Configure netbird (Linux only)
+# Configure:
+# - Linux: service + up automation
+# - macOS: if CLI variant, also allow automation via setup key
+- name: Configure netbird (Linux + macOS CLI)
   ansible.builtin.import_tasks: configure.yml
-  when: env_pkg_family in ["arch", "debian"]
+  when: >
+    (env_pkg_family in ["arch", "debian"]) or
+    (env_pkg_family == "macos" and (netbird_macos_variant | default("cli")) == "cli")
