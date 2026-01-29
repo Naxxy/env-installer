@@ -1,402 +1,404 @@
-Below is a **complete, self-contained `README.md`** you can copy, save, and reuse later to resume this setup with another LLM or your future self.
+# Env Installer – LLM Context & Design Requirements
 
-It intentionally:
+Inspired by https://github.com/markosamuli/linux-machine/tree/master
 
-- avoids chezmoi
-- assumes **local-only Ansible execution**
-- documents **why** decisions were made, not just how
-- includes concrete file paths and examples
-- encodes the **marker-file + host-facts fallback pattern**
+## Purpose of This Document
 
----
+This document is a **standalone, complete context file** intended to be provided verbatim to any new LLM chat.
 
-# Local-Only Ansible Workstation Setup
+Its goal is to ensure the LLM:
 
-**(macOS work laptop + Omarchy ThinkPad X240)**
+* Fully understands the **intent, constraints, preferences, and architectural direction** of this environment installer
+* Produces **consistent, compatible, non-regressive** suggestions, code, and structure
+* Does **not** re-introduce rejected patterns or unnecessary complexity
 
-## Purpose
-
-This repository defines a **local-only Ansible setup** for configuring personal machines in a **safe, explicit, and repeatable** way.
-
-It is designed for:
-
-- running Ansible **only on the local machine**
-- supporting **multiple platforms** (macOS + Arch/Omarchy)
-- supporting **device-specific behavior** (e.g. ThinkPad X240 quirks)
-- supporting **profile flags** like `work_laptop`
-- avoiding step numbers and custom detection scripts
-- making the setup easy to resume in a future LLM chat
-
-This setup currently supports:
-
-| Machine        | OS             | CPU               | Notes                          |
-| -------------- | -------------- | ----------------- | ------------------------------ |
-| ThinkPad X240  | Omarchy (Arch) | x86_64 (Intel i7) | Hyprland, touchscreen disabled |
-| MacBook (work) | macOS          | ARM64 (M-series)  | Work-only apps enabled         |
+This installer is a **core, long-lived system**, not a throwaway script. Treat it accordingly.
 
 ---
 
-## Core Design Principles
+## High-Level Goal
 
-1. **Local-only execution**
+Build a **modular, declarative, fail-fast environment installer** using **Ansible** as the execution engine.
 
-   - Ansible is always run against `localhost`
-   - No SSH inventory, no remote orchestration
+The system must support:
 
-2. **Classification over detection**
+* Workstations
+* Servers
+* Containers
 
-   - “What kind of machine is this?” is decided by:
+It must scale across:
 
-     - Ansible facts (OS, architecture)
-     - Explicit marker files (authoritative intent)
+* Multiple operating systems (initially Arch / Arch-like, Ubuntu/Debian-like, macOS)
+* Multiple device types (laptop, desktop, homelab server, VPS, container)
 
-3. **Marker files > heuristics > defaults**
+The installer should be:
 
-   - Marker files override everything
-   - Host facts are used as a fallback
-   - Defaults prevent surprises
-
-4. **Roles = responsibility boundaries**
-
-   - Platform roles (macOS / Arch)
-   - Desktop roles (Hyprland)
-   - Device roles (ThinkPad X240)
-   - Profile roles (work laptop)
-
-5. **No step numbering**
-
-   - Ordering is handled by role order
-   - Idempotency is handled by Ansible modules
+* Predictable
+* Explicit
+* Convention-driven
+* Easy to reason about
+* Safe to re-run (idempotent)
 
 ---
 
-## Repository Layout
+## Execution Model (Explicit)
+
+* This installer is **push-based**, not agent-based
+* It is executed manually by a human or explicitly-invoked automation
+* It is **not** continuously enforcing state
+* Idempotency matters, but perpetual convergence is **not assumed**
+* There is no background daemon, cron job, or ansible-pull loop
+
+This is a deliberate design choice to preserve transparency and control.
+
+---
+
+## Core Design Principles (Non-Negotiable)
+
+### 1. **Intent vs Implementation Separation**
+
+* **Intent** is expressed declaratively via flags and profiles
+* **Implementation** lives in playbooks and roles
+* OS / distro / platform logic must *never* leak into intent declarations
+
+Intent answers:
+
+> “What should exist on this system?”
+
+Implementation answers:
+
+> “How do we achieve that on *this* platform?”
+
+---
+
+### 2. **Feature-Flag-Driven Design**
+
+* All installable capabilities are represented as **feature flags**
+* Convention:
+
+  ```yaml
+  install_<feature>: true|false
+  ```
+
+Examples:
+
+```yaml
+install_docker: true
+install_netbird: true
+install_slack: false
+```
+
+Feature flags:
+
+* Are the *only* way to enable installs
+* Are machine- and profile-derived
+* Must be easy to audit and grep
+
+---
+
+### 3. **Profiles Are the Primary User Interface**
+
+Users do **not** manually toggle dozens of flags per machine.
+
+Instead, machines declare **profiles**, and profiles expand into feature flags.
+
+Example:
+
+```yaml
+profiles:
+  - base
+  - dev
+  - laptop
+```
+
+Profiles:
+
+* Are named sets of feature flags
+* Are composable
+* Live centrally (not duplicated per host)
+* Can overlap freely
+
+The system must include a deterministic step that derives `install_*` flags from profiles.
+
+---
+
+### 4. **Fail-Fast on Unsupported Platforms**
+
+If a feature flag is enabled but the current platform is not supported:
+
+✅ **FAIL HARD**
+❌ Do NOT silently skip
+❌ Do NOT warn and continue
+
+Example failure message (desired):
 
 ```
-ansible/
+install_slack=true but Slack is not implemented for Arch Linux.
+Either disable this feature or add platform support.
+```
+
+This prevents configuration drift and false confidence.
+
+---
+
+### 5. **Modularity Over Monoliths**
+
+* No giant `workstation.yml`
+* No massive conditional trees
+
+Instead:
+
+* One playbook per feature or concern
+* Clear, predictable structure
+* Minimal cross-feature coupling
+
+---
+
+### 6. **Simplicity Over Cleverness**
+
+Strongly prefer:
+
+* Boring Ansible conventions
+* Readable YAML
+* Explicit lists
+* Repetition over abstraction when clarity wins
+
+Avoid:
+
+* Meta-playbooks
+* Dynamic includes that obscure flow
+* Deep Jinja logic
+* Custom DSLs
+
+---
+
+### 7. **Convention Over Custom Frameworks**
+
+Use established Ansible patterns:
+
+* `inventory/group_vars`
+* `inventory/host_vars`
+* `site.yml`
+* `roles/<name>/tasks/main.yml`
+* OS-specific vars via `vars/<OS>.yml`
+
+Avoid reinventing tooling Ansible already provides.
+
+---
+
+## Structural Expectations
+
+### Repository Shape (Canonical)
+
+```text
+env-installer/
+├── README.md
+├── Makefile
+├── ansible.cfg
+├── scripts/
+│   └── bootstrap.sh          # minimal: ensure ansible exists, then run site.yml
 ├── inventory/
-│   └── hosts.yml
+│   ├── hosts.yml
+│   ├── group_vars/
+│   │   └── all/
+│   │       ├── profiles.yml  # profile → feature flag mapping
+│   │       ├── features.yml  # feature → supported platforms metadata
+│   │       └── defaults.yml  # global defaults
+│   └── host_vars/
+│       └── <hostname>.yml    # profiles only
 ├── playbooks/
-│   └── workstations.yml
+│   ├── site.yml
+│   ├── _derive_features.yml
+│   ├── _assert_supported.yml
+│   ├── base.yml
+│   ├── dev.yml
+│   ├── media.yml
+│   ├── docker.yml
+│   └── netbird.yml
 ├── roles/
-│   ├── profile_flags/
-│   ├── base/
-│   ├── macos_homebrew/
-│   ├── arch_pacman/
-│   ├── desktop_hyprland/
-│   ├── device_thinkpad_x240/
-│   └── profile_work_laptop/
-└── README.md
+│   ├── docker/
+│   ├── netbird/
+│   └── <complex_feature>/
+└── requirements.yml
 ```
 
 ---
 
-## Inventory (Local-Only)
+## Simple vs Complex Installs
 
-### `inventory/hosts.yml`
+### Simple Install
 
-```yaml
-all:
-  hosts:
-    localhost:
-      ansible_connection: local
-```
+A **simple install**:
 
-- There is only one host: `localhost`
-- All classification is done dynamically via facts and flags
+* Uses standard Ansible modules (`package`, `apt`, `pacman`, `homebrew`)
+* Has minimal OS variance
+* Does NOT require its own role
 
----
+Implemented as:
 
-## Playbook: Workstations
+* Tasks inside a playbook
 
-### `playbooks/workstations.yml`
+Examples:
 
-```yaml
-- name: Configure local workstation
-  hosts: localhost
-  become: true
-
-  roles:
-    - profile_flags # compute flags first
-    - base
-    - macos_homebrew
-    - arch_pacman
-    - desktop_hyprland
-    - device_thinkpad_x240
-    - profile_work_laptop
-```
-
-### Role ordering matters
-
-- `profile_flags` must run first
-- Platform roles run before dependent roles
-- Device and profile roles are isolated and explicit
+* `ripgrep`
+* `jq`
+* `htop`
 
 ---
 
-## Profile Flags (Marker File + Host Facts)
+### Complex Install
 
-### Goal
+A **complex install**:
 
-Compute `work_laptop` using:
+* Has OS-specific repositories or install mechanisms
+* Requires post-install configuration
+* Has platform-specific differences
 
-1. Explicit marker file (`/etc/ansible/work-laptop`)
-2. Host facts fallback (macOS + ARM64 + hostname heuristic)
-3. Default = false
+Implemented as:
 
----
+* A dedicated role
 
-### Marker File (Authoritative)
+Role responsibilities:
 
-On the **MacBook work laptop only**:
+* Own all OS/platform logic
+* Provide clear failure if unsupported
+* Expose only stable inputs
 
-```bash
-sudo mkdir -p /etc/ansible
-sudo touch /etc/ansible/work-laptop
-```
+Examples:
 
-Do **not** create this file on personal machines.
-
----
-
-### `roles/profile_flags/tasks/main.yml`
-
-```yaml
-- name: Check for explicit work-laptop marker
-  stat:
-    path: /etc/ansible/work-laptop
-  register: work_marker
-
-- name: Infer work-laptop from host facts (fallback)
-  set_fact:
-    inferred_work_laptop: >-
-      {{
-        ansible_facts['system'] == 'Darwin'
-        and ansible_facts['architecture'] in ['arm64', 'aarch64']
-        and (
-          'work' in (ansible_facts['hostname'] | lower)
-          or 'corp' in (ansible_facts['hostname'] | lower)
-        )
-      }}
-  when: not work_marker.stat.exists
-
-- name: Set final work_laptop flag
-  set_fact:
-    work_laptop: >-
-      {{
-        work_marker.stat.exists
-        or (inferred_work_laptop | default(false))
-      }}
-```
+* Docker
+* NetBird
+* Slack
+* Virtualization tooling
 
 ---
 
-## Base Role (All Machines)
+## Platform Handling Rules
 
-### `roles/base/tasks/main.yml`
+* Platform detection should rely on:
 
-```yaml
-- name: Install basic packages (Arch)
-  pacman:
-    name:
-      - git
-      - curl
-      - neovim
-    state: present
-  when:
-    - ansible_facts['system'] == 'Linux'
-    - ansible_facts['distribution'] == 'Archlinux'
-```
+  * `ansible_distribution`
+  * `ansible_os_family`
+  * `ansible_distribution_release`
+  * Explicit custom facts *only when necessary*
 
----
+* OS-specific values belong in:
 
-## macOS Platform Role
+  ```text
+  roles/<feature>/vars/<OS>.yml
+  ```
 
-### `roles/macos_homebrew/tasks/main.yml`
-
-```yaml
-- name: Install Homebrew if missing
-  shell: |
-    if ! command -v brew >/dev/null 2>&1; then
-      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    fi
-  args:
-    executable: /bin/bash
-  changed_when: false
-  when: ansible_facts['system'] == 'Darwin'
-
-- name: Install brew packages
-  homebrew:
-    name:
-      - git
-      - neovim
-      - jq
-    state: present
-  when: ansible_facts['system'] == 'Darwin'
-```
+* Tasks must reference generic variables, not inline OS conditionals
 
 ---
 
-## Arch / Omarchy Platform Role
+## Containers (Clarification)
 
-### `roles/arch_pacman/tasks/main.yml`
+* Container support is intended for:
 
-```yaml
-- name: Install pacman packages
-  pacman:
-    name:
-      - git
-      - neovim
-      - jq
-      - mpv
-      - yt-dlp
-    state: present
-  when:
-    - ansible_facts['system'] == 'Linux'
-    - ansible_facts['distribution'] == 'Archlinux'
-```
+  * development containers
+  * lightweight runtime environments
+* Not all features or profiles must be valid in containers
+* Containers may intentionally use reduced or minimal profiles
+* Unsupported features in containers must fail fast unless explicitly excluded by profile
 
 ---
 
-## Desktop Environment: Hyprland
+## Feature Lifecycle Conventions
 
-### `roles/desktop_hyprland/tasks/main.yml`
+Features may be in one of the following states:
 
-```yaml
-- name: Install Hyprland stack
-  pacman:
-    name:
-      - hyprland
-      - waybar
-      - wl-clipboard
-    state: present
-  when:
-    - ansible_facts['system'] == 'Linux'
-    - ansible_facts['distribution'] == 'Archlinux'
-```
+* **supported** – fully implemented and expected to work
+* **unsupported** – not implemented for this platform
+* **intentionally unimplemented** – planned but explicitly incomplete
+
+Intentionally unimplemented features must still **fail fast** when enabled,
+with a clear error explaining the status.
 
 ---
 
-## Device-Specific Role: ThinkPad X240
+## Secrets Handling
 
-Purpose: disable touchscreen via udev.
-
-### `roles/device_thinkpad_x240/tasks/main.yml`
-
-```yaml
-- name: Disable touchscreen via udev rule
-  copy:
-    dest: /etc/udev/rules.d/99-disable-touchscreen.rules
-    content: |
-      ACTION=="add", SUBSYSTEM=="input", ATTR{name}=="ELAN Touchscreen", ENV{LIBINPUT_IGNORE_DEVICE}="1"
-    owner: root
-    group: root
-    mode: "0644"
-  when:
-    - ansible_facts['system'] == 'Linux'
-    - ansible_facts['distribution'] == 'Archlinux'
-
-- name: Reload udev rules
-  command: udevadm control --reload-rules
-  when:
-    - ansible_facts['system'] == 'Linux'
-    - ansible_facts['distribution'] == 'Archlinux'
-
-- name: Trigger udev
-  command: udevadm trigger
-  when:
-    - ansible_facts['system'] == 'Linux'
-    - ansible_facts['distribution'] == 'Archlinux'
-```
-
-This role is included **explicitly** in the playbook to avoid accidental application elsewhere.
+* Secrets are **not** stored in this repository
+* Secrets are injected externally (environment variables, vaults, manual setup)
+* Playbooks may reference secrets but must not manage or generate them
 
 ---
 
-## Work Laptop Profile Role
+## Rolling Release Considerations
 
-### `roles/profile_work_laptop/tasks/main.yml`
-
-```yaml
-- name: Install work-only applications
-  homebrew_cask:
-    name:
-      - slack
-      - zoom
-      - google-chrome
-    state: present
-  when:
-    - ansible_facts['system'] == 'Darwin'
-    - work_laptop | default(false)
-```
+* Rolling-release platforms (e.g. Arch / Omarchy) are first-class citizens
+* Version pinning is preferred at the feature or tool level, not system-wide
+* Breakage should surface as failures, not silent workarounds
 
 ---
 
-## Running the Playbook
+## Bootstrap Philosophy
 
-### On ThinkPad X240 (Omarchy)
+* Bootstrap logic must be **minimal**
+* Its only responsibilities:
 
-```bash
-ansible-playbook -i inventory/hosts.yml playbooks/workstations.yml --ask-become-pass
-```
+  * Ensure Ansible exists
+  * Execute the main playbook
 
-Expected behavior:
+Avoid:
 
-- Arch + Hyprland roles run
-- Touchscreen is disabled
-- macOS + work roles are skipped
-
----
-
-### On MacBook (Work Laptop)
-
-Ensure marker file exists:
-
-```bash
-sudo touch /etc/ansible/work-laptop
-```
-
-Then run:
-
-```bash
-ansible-playbook -i inventory/hosts.yml playbooks/workstations.yml
-```
-
-Expected behavior:
-
-- Homebrew installs
-- Work-only apps install
-- Linux / Hyprland / ThinkPad roles skipped
+* Re-implementing Ansible logic in bash
+* Complex dependency resolution in shell scripts
 
 ---
 
-## Mental Model Summary (for future you / LLM)
+## Idempotency Expectations
 
-- **Inventory**: always `localhost`
-- **Facts**: OS + architecture
-- **Marker files**: explicit intent
-- **Roles**: isolated responsibilities
-- **Playbooks**: machine category
-- **Order matters**, not numbering
-- **Idempotent by default**
-
-> “What kind of machine is this?”
-> is answered once, early, and everything else follows.
+* All tasks must be safely re-runnable
+* No destructive actions unless explicitly requested
+* Prefer package manager state over command checks
 
 ---
 
-## Future Extensions (Not Implemented Yet)
+## Explicit Non-Goals
 
-- Add more profile flags using the same pattern:
+This project is **not**:
 
-  - `/etc/ansible/travel-laptop`
-  - `/etc/ansible/headless`
+* A full fleet management system
+* A replacement for Nix
+* A secrets manager
+* A Kubernetes-centric installer
 
-- Add a `dwm` desktop role
-- Add a `servers.yml` playbook
-- Integrate with chezmoi later (optional)
+It is a **human-controlled, explicit, repeatable environment installer**.
 
 ---
 
-**End of README**
-This file is intended to be dropped into a fresh chat and used as full context to continue development.
+## How an LLM Should Behave When Helping With This Project
+
+When generating suggestions or code:
+
+✅ Respect this structure
+✅ Preserve feature flags + profiles
+✅ Prefer explicit, readable YAML
+✅ Fail fast on unsupported platforms
+✅ Use Ansible conventions
+
+❌ Do not collapse everything into one playbook
+❌ Do not introduce silent skipping
+❌ Do not suggest over-engineered abstractions
+❌ Do not invent new frameworks or layers
+
+If uncertain, ask:
+
+> “Does this increase clarity and predictability?”
+
+If not, don’t do it.
+
+---
+
+## Summary (Mental Model)
+
+* **Profiles** describe machines
+* **Feature flags** describe intent
+* **Playbooks** orchestrate
+* **Roles** implement complexity
+* **Unsupported == failure**
+* **Simple beats clever**
+
+This document defines the *source of truth
