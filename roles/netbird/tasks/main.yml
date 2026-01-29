@@ -4,5 +4,9 @@
 - name: Install netbird (platform)
   ansible.builtin.include_tasks: "{{ env_pkg_family }}.yml"
 
-- name: Configure netbird
+# Keep the skeleton honest:
+# - Linux gets basic "up" enrollment automation.
+# - macOS is install-only for now (manual enrollment or a future macOS-specific implementation).
+- name: Configure netbird (Linux only)
   ansible.builtin.import_tasks: configure.yml
+  when: env_pkg_family in ["arch", "debian"]

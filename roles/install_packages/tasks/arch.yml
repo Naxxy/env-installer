@@ -1,7 +1,13 @@
+# roles/install_packages/tasks/arch.yml
 # Arch-family installer:
 # - Repo packages: pacman -S --needed
 # - AUR packages (simple heuristic): name ends with "-bin" -> yay
 #   (Fail fast if yay isn't present)
+#
+# Idempotency / changed_when:
+# - We DO NOT parse pacman/yay output.
+# - Instead, we pre-check installed packages (pacman -Q) and only install missing ones.
+# - If we run an install command at all, it implies changes.
 
 - name: Ensure pacman is available
   ansible.builtin.command: pacman --version
@@ -18,36 +24,81 @@
     arch_repo_pkgs: "{{ install_packages_list | map(attribute='name') | reject('match', '.*-bin$') | list }}"
     arch_aur_pkgs: "{{ install_packages_list | map(attribute='name') | select('match', '.*-bin$') | list }}"
 
-- name: Install repo packages via pacman
-  become: true
-  ansible.builtin.command: >
-    pacman -S --noconfirm --needed {{ arch_repo_pkgs | join(' ') }}
-  register: pacman_install
-  changed_when: >-
-    pacman_install.stdout is defined and
-    ('there is nothing to do' not in (pacman_install.stdout | lower))
+# -----------------------------
+# Determine what is missing
+# -----------------------------
+
+- name: Check installed status for repo packages (pacman -Q)
+  ansible.builtin.command: "pacman -Q {{ item }}"
+  register: repo_pkg_checks
+  changed_when: false
+  failed_when: false
+  loop: "{{ arch_repo_pkgs }}"
   when: arch_repo_pkgs | length > 0
 
-- name: Fail if AUR packages requested but yay missing
+- name: Check installed status for AUR packages (pacman -Q)
+  ansible.builtin.command: "pacman -Q {{ item }}"
+  register: aur_pkg_checks
+  changed_when: false
+  failed_when: false
+  loop: "{{ arch_aur_pkgs }}"
+  when: arch_aur_pkgs | length > 0
+
+- name: Compute missing package lists
+  ansible.builtin.set_fact:
+    arch_missing_repo_pkgs: >-
+      {{
+        (repo_pkg_checks.results | default([]))
+        | selectattr('rc', 'ne', 0)
+        | map(attribute='item')
+        | list
+      }}
+    arch_missing_aur_pkgs: >-
+      {{
+        (aur_pkg_checks.results | default([]))
+        | selectattr('rc', 'ne', 0)
+        | map(attribute='item')
+        | list
+      }}
+
+- name: Debug missing package lists (optional)
+  ansible.builtin.debug:
+    msg:
+      arch_repo_pkgs: "{{ arch_repo_pkgs }}"
+      arch_missing_repo_pkgs: "{{ arch_missing_repo_pkgs }}"
+      arch_aur_pkgs: "{{ arch_aur_pkgs }}"
+      arch_missing_aur_pkgs: "{{ arch_missing_aur_pkgs }}"
+  when: (arch_repo_pkgs | length > 0) or (arch_aur_pkgs | length > 0)
+
+# -----------------------------
+# Install repo packages (pacman)
+# -----------------------------
+
+- name: Install missing repo packages via pacman
+  become: true
+  ansible.builtin.command: >
+    pacman -S --noconfirm --needed {{ arch_missing_repo_pkgs | join(' ') }}
+  changed_when: true
+  when: arch_missing_repo_pkgs | length > 0
+
+# -----------------------------
+# Install AUR packages (yay)
+# -----------------------------
+
+- name: Fail if AUR packages are missing but yay is not installed
   ansible.builtin.fail:
     msg: >-
-      AUR packages requested ({{ arch_aur_pkgs }}), but 'yay' is not installed.
+      AUR packages requested and missing ({{ arch_missing_aur_pkgs }}),
+      but 'yay' is not installed.
       Install yay first, or change the package selection for this feature.
   when:
-    - arch_aur_pkgs | length > 0
+    - arch_missing_aur_pkgs | length > 0
     - yay_check.rc != 0
 
-- name: Install AUR packages via yay
+- name: Install missing AUR packages via yay
   ansible.builtin.command: >
-    yay -S --noconfirm --needed {{ arch_aur_pkgs | join(' ') }}
-  register: yay_install
-  changed_when: >-
-    yay_install.stdout is defined and
-    (
-      ('there is nothing to do' not in (yay_install.stdout | lower))
-      and
-      ('nothing to do' not in (yay_install.stdout | lower))
-    )
+    yay -S --noconfirm --needed {{ arch_missing_aur_pkgs | join(' ') }}
+  changed_when: true
   when:
-    - arch_aur_pkgs | length > 0
+    - arch_missing_aur_pkgs | length > 0
     - yay_check.rc == 0

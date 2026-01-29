@@ -3,11 +3,6 @@
   hosts: all
   gather_facts: true
 
-  # Make variable loading explicit and predictable.
-  # (This repo keeps group_vars/all.yml at the repo root for now.)
-  vars_files:
-    - ../group_vars/all.yml
-
   pre_tasks:
     - name: Include derived features
       ansible.builtin.import_tasks: _derive_features.yml
