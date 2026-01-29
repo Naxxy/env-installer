@@ -1,7 +1,0 @@
-all:
-  hosts:
-    localhost:
-      ansible_connection: local
-      device_id: work-laptop
-      device_family: macbook_work
-      touchscreen_default_enabled: true

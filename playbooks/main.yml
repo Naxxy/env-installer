@@ -1,0 +1,14 @@
+- name: Env installer (main)
+  hosts: all
+  gather_facts: true
+
+  pre_tasks:
+    - name: Include derived features
+      ansible.builtin.import_tasks: _derive_features.yml
+
+    - name: Assert enabled features are supported for this platform
+      ansible.builtin.import_tasks: _assert_supported.yml
+
+  tasks:
+    - name: Install enabled features
+      ansible.builtin.import_tasks: _install_features.yml

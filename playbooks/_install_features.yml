@@ -1,0 +1,14 @@
+# Explicit includes (no hidden loops),
+# so it's always clear which features exist and how they install.
+
+- name: Install mpv feature
+  ansible.builtin.import_tasks: "../features/install_mpv.yml"
+  when: install_mpv | bool
+
+- name: Install brave feature
+  ansible.builtin.import_tasks: "../features/install_brave.yml"
+  when: install_brave | bool
+
+- name: Install netbird feature
+  ansible.builtin.import_tasks: "../features/install_netbird.yml"
+  when: install_netbird | bool

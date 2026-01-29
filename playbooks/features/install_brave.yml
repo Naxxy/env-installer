@@ -1,0 +1,42 @@
+- name: Debug brave feature intent
+  ansible.builtin.debug:
+    msg:
+      feature: install_brave
+      enabled: "{{ install_brave }}"
+      reason: "{{ install_brave_reason }}"
+      pkg_family: "{{ env_pkg_family }}"
+      flavor: "{{ env_flavor }}"
+
+# Make the package choice obvious and local to the feature.
+- name: Choose brave package name for this platform
+  ansible.builtin.set_fact:
+    brave_pkg_name: >-
+      {{
+        (
+          env_package_names.brave.arch
+          if env_pkg_family == 'arch'
+          else
+            (
+              env_package_names.brave.debian
+              if env_pkg_family == 'debian'
+              else
+                env_package_names.brave.macos
+            )
+        )
+      }}
+    brave_is_cask: "{{ (env_pkg_family == 'macos') | bool }}"
+
+- name: Debug chosen brave package
+  ansible.builtin.debug:
+    msg:
+      brave_pkg_name: "{{ brave_pkg_name }}"
+      brave_is_cask: "{{ brave_is_cask }}"
+
+- name: Install brave
+  ansible.builtin.include_role:
+    name: install_packages
+  vars:
+    install_packages_list:
+      - name: "{{ brave_pkg_name }}"
+        state: present
+        cask: "{{ brave_is_cask }}"

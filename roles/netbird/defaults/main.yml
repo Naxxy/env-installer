@@ -1,0 +1,8 @@
+netbird_enabled: true
+
+# Usually provided per-host (host_vars) or via vault/extra-vars:
+netbird_setup_key: null
+netbird_management_url: null   # optional if using default cloud
+netbird_tags: []
+netbird_routes: []
+netbird_dns_enabled: false

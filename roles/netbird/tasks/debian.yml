@@ -1,0 +1,7 @@
+- name: Install netbird (debian)
+  ansible.builtin.include_role:
+    name: install_packages
+  vars:
+    install_packages_list:
+      - name: "netbird"
+        state: present

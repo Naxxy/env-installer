@@ -1,0 +1,44 @@
+# Fail fast:
+# If feature flag is true but support matrix doesn't include current pkg_family + flavor
+
+- name: Assert env_pkg_family is defined
+  ansible.builtin.assert:
+    that:
+      - env_pkg_family is defined
+      - env_pkg_family in ["arch", "debian", "macos"]
+    fail_msg: >-
+      env_pkg_family must be explicitly set to one of: arch, debian, macos.
+      (Set it in inventories/host_vars/<host>.yml)
+
+- name: Assert env_flavor is defined
+  ansible.builtin.assert:
+    that:
+      - env_flavor is defined
+      - env_flavor | length > 0
+    fail_msg: >-
+      env_flavor must be explicitly set (e.g. omarchy, arch, ubuntu, debian, kubuntu, macos).
+      (Set it in inventories/host_vars/<host>.yml)
+
+- name: Assert support for enabled features
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          (env_feature_support[item][env_pkg_family] is defined)
+          and
+          (
+            ('all' in env_feature_support[item][env_pkg_family].flavors)
+            or
+            (env_flavor in env_feature_support[item][env_pkg_family].flavors)
+          )
+        )
+    fail_msg: >-
+      Feature '{{ item }}' is enabled but unsupported for pkg_family='{{ env_pkg_family }}' flavor='{{ env_flavor }}'.
+      Support list is: {{
+        (env_feature_support[item][env_pkg_family].flavors
+          if (env_feature_support[item] is defined and env_feature_support[item][env_pkg_family] is defined)
+          else 'MISSING SUPPORT ENTRY'
+        )
+      }}
+  loop: "{{ env_known_features }}"
+  when: "{{ (vars[item] | default(false)) | bool }}"

@@ -1,0 +1,7 @@
+env_profiles:
+  - base
+  - vpn
+
+netbird_setup_key: "NB_SETUP_KEY_FROM_VAULT_OR_SECRET"
+netbird_management_url: "https://netbird.example.com"   # if self-hosted
+netbird_tags: ["thinkpad", "dev"]

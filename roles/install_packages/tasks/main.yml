@@ -1,0 +1,15 @@
+# A small abstraction role:
+# - Takes install_packages_list: [{name, state, cask?}]
+# - Dispatches to a pkg_family-specific installer
+#
+# You can keep this role tiny and conventional.
+
+- name: Assert install_packages_list provided
+  ansible.builtin.assert:
+    that:
+      - install_packages_list is defined
+      - install_packages_list | length > 0
+    fail_msg: "install_packages_list must be provided to role install_packages."
+
+- name: Dispatch to platform installer
+  ansible.builtin.include_tasks: "{{ env_pkg_family }}.yml"

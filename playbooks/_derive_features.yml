@@ -1,0 +1,85 @@
+# Derives the final feature flags from:
+# - defaults (env_feature_defaults)
+# - profiles (env_profiles -> env_profiles_catalog)
+# - overrides (env_feature_overrides)
+#
+# Produces:
+# - install_mpv / install_brave booleans (final)
+# - install_mpv_reason / install_brave_reason strings (debuggable)
+
+- name: Ensure env_profiles is defined
+  ansible.builtin.set_fact:
+    env_profiles: "{{ env_profiles | default([]) }}"
+
+- name: Ensure env_feature_overrides is defined
+  ansible.builtin.set_fact:
+    env_feature_overrides: "{{ env_feature_overrides | default({}) }}"
+
+- name: Collect features enabled by profiles
+  ansible.builtin.set_fact:
+    env_features_from_profiles: >-
+      {{
+        (env_profiles | default([]))
+        | map('extract', env_profiles_catalog)
+        | select('defined')
+        | list
+        | flatten
+        | unique
+      }}
+
+- name: Initialize env_feature_reasons
+  ansible.builtin.set_fact:
+    env_feature_reasons: {}
+
+- name: Derive final feature flags (defaults + profiles + overrides)
+  ansible.builtin.set_fact:
+    "{{ item }}": >-
+      {{
+        (
+          env_feature_overrides[item]
+          if (env_feature_overrides is mapping and (item in env_feature_overrides))
+          else
+            (
+              true
+              if (item in (env_features_from_profiles | default([])))
+              else
+                (env_feature_defaults[item] | default(false))
+            )
+        )
+      }}
+    "env_feature_reasons": >-
+      {{
+        env_feature_reasons
+        | combine({
+            item: (
+              ('override:' ~ (env_feature_overrides[item] | string))
+              if (env_feature_overrides is mapping and (item in env_feature_overrides))
+              else
+                (
+                  'profile'
+                  if (item in (env_features_from_profiles | default([])))
+                  else
+                    'default'
+                )
+            )
+          }, recursive=True)
+      }}
+  loop: "{{ env_known_features }}"
+
+- name: Expose per-feature reason variables (install_x_reason)
+  ansible.builtin.set_fact:
+    "{{ item }}_reason": "{{ env_feature_reasons[item] }}"
+  loop: "{{ env_known_features }}"
+
+- name: Debug derived features
+  ansible.builtin.debug:
+    msg:
+      env_pkg_family: "{{ env_pkg_family | default('UNSET') }}"
+      env_flavor: "{{ env_flavor | default('UNSET') }}"
+      env_profiles: "{{ env_profiles }}"
+      env_features_from_profiles: "{{ env_features_from_profiles }}"
+      derived_features:
+        install_mpv: "{{ install_mpv }}"
+        install_mpv_reason: "{{ install_mpv_reason }}"
+        install_brave: "{{ install_brave }}"
+        install_brave_reason: "{{ install_brave_reason }}"

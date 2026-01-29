@@ -1,0 +1,26 @@
+env_known_features:
+  - install_mpv
+  - install_brave
+  - install_netbird
+
+env_feature_defaults:
+  install_mpv: false
+  install_brave: false
+  install_netbird: false
+
+env_profiles_catalog:
+  base:
+    - install_brave
+  media:
+    - install_mpv
+  vpn:
+    - install_netbird
+
+env_feature_support:
+  install_netbird:
+    arch:
+      flavors: ["arch", "omarchy"]
+    debian:
+      flavors: ["debian", "ubuntu", "kubuntu"]
+    macos:
+      flavors: ["macos"]

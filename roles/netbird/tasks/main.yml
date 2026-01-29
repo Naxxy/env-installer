@@ -1,0 +1,8 @@
+- name: Assert netbird inputs
+  ansible.builtin.import_tasks: assert.yml
+
+- name: Install netbird (platform)
+  ansible.builtin.include_tasks: "{{ env_pkg_family }}.yml"
+
+- name: Configure netbird
+  ansible.builtin.import_tasks: configure.yml

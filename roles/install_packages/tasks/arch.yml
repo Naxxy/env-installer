@@ -1,0 +1,41 @@
+# Arch-family installer:
+# - Repo packages: pacman --needed
+# - AUR packages (simple heuristic): name ends with "-bin" -> yay
+#   (Fail fast if yay isn't present)
+
+- name: Ensure pacman is available
+  ansible.builtin.command: pacman --version
+  changed_when: false
+
+- name: Check if yay is available
+  ansible.builtin.command: yay --version
+  register: yay_check
+  changed_when: false
+  failed_when: false
+
+- name: Split package list into repo vs aur (heuristic)
+  ansible.builtin.set_fact:
+    arch_repo_pkgs: "{{ install_packages_list | map(attribute='name') | reject('match', '.*-bin$') | list }}"
+    arch_aur_pkgs: "{{ install_packages_list | map(attribute='name') | select('match', '.*-bin$') | list }}"
+
+- name: Install repo packages via pacman
+  become: true
+  ansible.builtin.command: >
+    pacman -S --noconfirm --needed {{ arch_repo_pkgs | join(' ') }}
+  when: arch_repo_pkgs | length > 0
+
+- name: Fail if AUR packages requested but yay missing
+  ansible.builtin.fail:
+    msg: >-
+      AUR packages requested ({{ arch_aur_pkgs }}), but 'yay' is not installed.
+      Install yay first, or change the package selection for this feature.
+  when:
+    - arch_aur_pkgs | length > 0
+    - yay_check.rc != 0
+
+- name: Install AUR packages via yay
+  ansible.builtin.command: >
+    yay -S --noconfirm --needed {{ arch_aur_pkgs | join(' ') }}
+  when:
+    - arch_aur_pkgs | length > 0
+    - yay_check.rc == 0

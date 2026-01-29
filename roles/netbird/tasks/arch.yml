@@ -1,0 +1,10 @@
+# If netbird is in official repos on your target Arch, use pacman.
+# If you rely on AUR, fail if yay missing (same pattern you used for brave-bin).
+
+- name: Install netbird (arch)
+  ansible.builtin.include_role:
+    name: install_packages
+  vars:
+    install_packages_list:
+      - name: "netbird"   # or "netbird-bin" if AUR; then arch installer will demand yay
+        state: present
