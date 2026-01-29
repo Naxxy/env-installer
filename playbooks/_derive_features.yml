@@ -4,8 +4,8 @@
 # - overrides (env_feature_overrides)
 #
 # Produces:
-# - install_mpv / install_brave booleans (final)
-# - install_mpv_reason / install_brave_reason strings (debuggable)
+# - install_* booleans (final)
+# - install_*_reason strings (debuggable)
 
 - name: Ensure env_profiles is defined
   ansible.builtin.set_fact:
@@ -47,7 +47,7 @@
             )
         )
       }}
-    "env_feature_reasons": >-
+    env_feature_reasons: >-
       {{
         env_feature_reasons
         | combine({
@@ -83,3 +83,5 @@
         install_mpv_reason: "{{ install_mpv_reason }}"
         install_brave: "{{ install_brave }}"
         install_brave_reason: "{{ install_brave_reason }}"
+        install_netbird: "{{ install_netbird }}"
+        install_netbird_reason: "{{ install_netbird_reason }}"
