@@ -1,3 +1,4 @@
+# roles/netbird/tasks/configure.yml
 - name: Ensure netbird service is enabled and started (Linux)
   become: true
   ansible.builtin.service:
@@ -6,13 +7,22 @@
     state: started
   when: env_pkg_family in ["arch", "debian"]
 
-- name: Enroll device (idempotent-ish pattern)
-  # In practice you’d check current status first; keep simple for skeleton.
+- name: Check netbird status
+  become: true
+  ansible.builtin.command: netbird status
+  register: netbird_status
+  changed_when: false
+  failed_when: false
+
+- name: Enroll device if not connected
   become: true
   ansible.builtin.command: >
     netbird up
     --setup-key {{ netbird_setup_key | quote }}
     {% if netbird_management_url %} --management-url {{ netbird_management_url | quote }}{% endif %}
   register: netbird_up
-  changed_when: "'Connected' in (netbird_up.stdout | default('')) or netbird_up.rc == 0"
+  changed_when: true
   failed_when: netbird_up.rc != 0
+  when: >-
+    (netbird_status.rc != 0) or
+    ('connected' not in (netbird_status.stdout | default('') | lower))

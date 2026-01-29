@@ -1,5 +1,5 @@
 # Arch-family installer:
-# - Repo packages: pacman --needed
+# - Repo packages: pacman -S --needed
 # - AUR packages (simple heuristic): name ends with "-bin" -> yay
 #   (Fail fast if yay isn't present)
 
@@ -22,6 +22,10 @@
   become: true
   ansible.builtin.command: >
     pacman -S --noconfirm --needed {{ arch_repo_pkgs | join(' ') }}
+  register: pacman_install
+  changed_when: >-
+    pacman_install.stdout is defined and
+    ('there is nothing to do' not in (pacman_install.stdout | lower))
   when: arch_repo_pkgs | length > 0
 
 - name: Fail if AUR packages requested but yay missing
@@ -36,6 +40,14 @@
 - name: Install AUR packages via yay
   ansible.builtin.command: >
     yay -S --noconfirm --needed {{ arch_aur_pkgs | join(' ') }}
+  register: yay_install
+  changed_when: >-
+    yay_install.stdout is defined and
+    (
+      ('there is nothing to do' not in (yay_install.stdout | lower))
+      and
+      ('nothing to do' not in (yay_install.stdout | lower))
+    )
   when:
     - arch_aur_pkgs | length > 0
     - yay_check.rc == 0
