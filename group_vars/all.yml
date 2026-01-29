@@ -1,13 +1,17 @@
+# All features known to the system.
+# These are the only install_* keys that will be derived and asserted.
 env_known_features:
   - install_mpv
   - install_brave
   - install_netbird
 
+# Default state for each known feature (applied unless enabled by a profile or overridden).
 env_feature_defaults:
   install_mpv: false
   install_brave: false
   install_netbird: false
 
+# Profile catalog (primary user interface): profile -> list of features enabled.
 env_profiles_catalog:
   base:
     - install_brave
@@ -16,7 +20,25 @@ env_profiles_catalog:
   vpn:
     - install_netbird
 
+# Support matrix: feature -> pkg_family -> allowed flavors
+# Use explicit 'all' to mean "supported for any flavor of this family".
 env_feature_support:
+  install_mpv:
+    arch:
+      flavors: ["all"]
+    debian:
+      flavors: ["all"]
+    macos:
+      flavors: ["all"]
+
+  install_brave:
+    arch:
+      flavors: ["all"]
+    debian:
+      flavors: ["all"]
+    macos:
+      flavors: ["all"]
+
   install_netbird:
     arch:
       flavors: ["arch", "omarchy"]
@@ -24,3 +46,14 @@ env_feature_support:
       flavors: ["debian", "ubuntu", "kubuntu"]
     macos:
       flavors: ["macos"]
+
+# Central mapping to make package-name differences obvious and auditable.
+# Features should refer to these rather than embedding OS logic everywhere.
+env_package_names:
+  mpv:
+    all: "mpv"
+
+  brave:
+    arch: "brave-bin"           # typical AUR choice
+    debian: "brave-browser"     # if you later add repo setup; placeholder name here
+    macos: "brave-browser"      # brew cask name
