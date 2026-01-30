@@ -1,9 +1,9 @@
-env_pkg_family: arch
-env_flavor: arch
+env_pkg_family: debian
+env_flavor: kubuntu
 
 env_profiles:
   - base
-  - vpn
+  # - vpn
   - media
   - dev_cli
 
