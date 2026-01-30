@@ -1,3 +1,10 @@
+# playbooks/features/install_brave.yml
+#
+# Brave:
+# - Arch: brave-bin (AUR via yay heuristic in install_packages role)
+# - macOS: brave-browser (brew cask)
+# - Debian-family (Debian/Ubuntu/Kubuntu): add Brave apt repo (keyring + .sources), apt update, then install brave-browser
+
 - name: Debug brave feature intent
   ansible.builtin.debug:
     msg:
@@ -7,7 +14,48 @@
       pkg_family: "{{ env_pkg_family }}"
       flavor: "{{ env_flavor }}"
 
-# Make the package choice obvious and local to the feature.
+# -----------------------------
+# Debian-family bootstrap (repo)
+# -----------------------------
+# Without this, apt will error with:
+#   "no package matching 'brave-browser' is available"
+# because Brave is not in default Ubuntu/Kubuntu repos.
+
+- name: Ensure curl is present (debian)
+  become: true
+  ansible.builtin.apt:
+    name: curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: env_pkg_family == "debian"
+
+- name: Install Brave signing keyring (debian)
+  become: true
+  ansible.builtin.get_url:
+    url: "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
+    dest: "/usr/share/keyrings/brave-browser-archive-keyring.gpg"
+    mode: "0644"
+  when: env_pkg_family == "debian"
+
+- name: Install Brave apt source file (debian)
+  become: true
+  ansible.builtin.get_url:
+    url: "https://brave-browser-apt-release.s3.brave.com/brave-browser.sources"
+    dest: "/etc/apt/sources.list.d/brave-browser-release.sources"
+    mode: "0644"
+  when: env_pkg_family == "debian"
+
+- name: Update apt cache after adding Brave repo (debian)
+  become: true
+  ansible.builtin.apt:
+    update_cache: true
+  when: env_pkg_family == "debian"
+
+# -----------------------------
+# Platform package selection
+# -----------------------------
+
 - name: Choose brave package name for this platform
   ansible.builtin.set_fact:
     brave_pkg_name: >-
@@ -31,6 +79,10 @@
     msg:
       brave_pkg_name: "{{ brave_pkg_name }}"
       brave_is_cask: "{{ brave_is_cask }}"
+
+# -----------------------------
+# Install
+# -----------------------------
 
 - name: Install brave
   ansible.builtin.include_role:
