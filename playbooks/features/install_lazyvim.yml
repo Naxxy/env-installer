@@ -1,4 +1,10 @@
 # playbooks/features/install_lazyvim.yml
+#
+# LazyVim is not a package — it's a Neovim configuration.
+# We keep this task file explicit and auditable:
+# - Install platform-specific dependency packages via install_packages role
+# - Clone the LazyVim starter repo into ~/.config/nvim (only if it doesn't exist)
+# - Remove the .git directory so it becomes "your config" rather than a repo checkout
 
 - name: Debug LazyVim feature intent
   ansible.builtin.debug:
@@ -9,6 +15,7 @@
       pkg_family: "{{ env_pkg_family }}"
       flavor: "{{ env_flavor }}"
 
+# Pick the correct dependency list from inventory/group_vars/all.yml (env_package_names.lazyvim_deps.*).
 - name: Choose LazyVim dependency packages for this platform
   ansible.builtin.set_fact:
     lazyvim_dep_pkgs: >-
@@ -26,17 +33,39 @@
         )
       }}
 
+# Convert ["neovim","git",...] into:
+#   [{name: "neovim", state: "present"}, {name: "git", state:"present"}, ...]
+# We do this in a plain, readable way (no from_yaml tricks).
+- name: Build install_packages_list for LazyVim dependencies
+  ansible.builtin.set_fact:
+    lazyvim_install_packages_list:
+      - name: "{{ lazyvim_dep_pkgs[0] }}"
+        state: present
+  when: lazyvim_dep_pkgs | length > 0
+
+- name: Add LazyVim dependency package (2)
+  ansible.builtin.set_fact:
+    lazyvim_install_packages_list: "{{ lazyvim_install_packages_list + [ {'name': lazyvim_dep_pkgs[1], 'state': 'present'} ] }}"
+  when: lazyvim_dep_pkgs | length > 1
+
+- name: Add LazyVim dependency package (3)
+  ansible.builtin.set_fact:
+    lazyvim_install_packages_list: "{{ lazyvim_install_packages_list + [ {'name': lazyvim_dep_pkgs[2], 'state': 'present'} ] }}"
+  when: lazyvim_dep_pkgs | length > 2
+
+- name: Add LazyVim dependency package (4)
+  ansible.builtin.set_fact:
+    lazyvim_install_packages_list: "{{ lazyvim_install_packages_list + [ {'name': lazyvim_dep_pkgs[3], 'state': 'present'} ] }}"
+  when: lazyvim_dep_pkgs | length > 3
+
+# If you ever extend lazyvim_deps beyond 4 items, add more “Add ... (N)” steps here.
+# We keep it explicit on purpose.
+
 - name: Install LazyVim dependencies (neovim, git, ripgrep, fd)
   ansible.builtin.include_role:
     name: install_packages
   vars:
-    install_packages_list: >-
-      {{
-        lazyvim_dep_pkgs
-        | map('regex_replace', '^(.*)$', '{\"name\":\"\\1\",\"state\":\"present\"}')
-        | map('from_yaml')
-        | list
-      }}
+    install_packages_list: "{{ lazyvim_install_packages_list }}"
   when: lazyvim_dep_pkgs | length > 0
 
 - name: Determine LazyVim target directory
