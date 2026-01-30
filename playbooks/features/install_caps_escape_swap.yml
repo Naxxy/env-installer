@@ -1,4 +1,4 @@
-# playbooks/features/install_caps_escape_swap.yml
+# FILEPATH: playbooks/features/install_caps_escape_swap.yml
 #
 # Swap CapsLock and Escape keys, with persistence across reboots.
 #
@@ -8,6 +8,11 @@
 #
 # Enforcement of support happens in _assert_supported.yml.
 # This file assumes it is only called on supported platforms.
+#
+# Wayland vs X11:
+# - X11: Use /etc/default/keyboard + /etc/X11/xorg.conf.d + setxkbmap (immediate apply)
+# - Wayland (KDE Plasma): setxkbmap + Xorg config do NOT reliably apply.
+#   We instead set KDE config (kxkbrc) via kwriteconfig5 and warn that logout/login may be required.
 
 - name: Debug caps/escape swap feature intent
   ansible.builtin.debug:
@@ -18,8 +23,8 @@
       pkg_family: "{{ env_pkg_family }}"
       flavor: "{{ env_flavor }}"
 
-# setxkbmap comes from x11-xkb-utils
-- name: Ensure setxkbmap is available
+# setxkbmap comes from x11-xkb-utils (only truly needed on X11, but harmless to have installed)
+- name: Ensure setxkbmap is available (Debian-family)
   become: true
   ansible.builtin.apt:
     name: x11-xkb-utils
@@ -32,12 +37,22 @@
   ansible.builtin.set_fact:
     caps_escape_xkb_option: "caps:swapescape"
 
+- name: Detect Wayland session
+  ansible.builtin.set_fact:
+    env_is_wayland: "{{ (ansible_env.XDG_SESSION_TYPE | default('')) == 'wayland' }}"
+
+- name: Debug session type
+  ansible.builtin.debug:
+    msg:
+      xdg_session_type: "{{ ansible_env.XDG_SESSION_TYPE | default('UNKNOWN') }}"
+      is_wayland: "{{ env_is_wayland }}"
+
 # -----------------------------
-# Persistence (system-wide)
+# X11 Persistence (system-wide)
 # -----------------------------
 # Debian/Ubuntu commonly store keyboard defaults here.
-# This helps persist across reboots and is a conventional place to manage it.
-- name: Ensure /etc/default/keyboard has XKBOPTIONS set for caps/escape swap
+# This helps persist across reboots in X11 contexts.
+- name: Ensure /etc/default/keyboard has XKBOPTIONS set for caps/escape swap (X11)
   become: true
   ansible.builtin.lineinfile:
     path: /etc/default/keyboard
@@ -45,19 +60,21 @@
     line: 'XKBOPTIONS="{{ caps_escape_xkb_option }}"'
     create: true
     mode: "0644"
+  when: not env_is_wayland
 
 # -----------------------------
-# Persistence (Xorg)
+# X11 Persistence (Xorg)
 # -----------------------------
-# For X11 sessions, an Xorg conf.d snippet is a very reliable persistence mechanism.
-- name: Ensure Xorg keyboard config directory exists
+# For X11 sessions, an Xorg conf.d snippet is a reliable persistence mechanism.
+- name: Ensure Xorg keyboard config directory exists (X11)
   become: true
   ansible.builtin.file:
     path: /etc/X11/xorg.conf.d
     state: directory
     mode: "0755"
+  when: not env_is_wayland
 
-- name: Persist caps/escape swap via Xorg config
+- name: Persist caps/escape swap via Xorg config (X11)
   become: true
   ansible.builtin.copy:
     dest: /etc/X11/xorg.conf.d/00-keyboard.conf
@@ -70,29 +87,70 @@
           MatchIsKeyboard "on"
           Option "XkbOptions" "{{ caps_escape_xkb_option }}"
       EndSection
+  when: not env_is_wayland
 
 # -----------------------------
-# Session apply (current login)
+# X11 Apply (current session)
 # -----------------------------
-# Apply immediately for the current session (useful on first run).
+# Apply immediately for the current X11 session (useful on first run).
 # We keep changed_when false to avoid noisy "changed" output for a session-state command.
-- name: Apply caps/escape swap for current session
+- name: Apply caps/escape swap for current X11 session
   ansible.builtin.command: >
     setxkbmap -option {{ caps_escape_xkb_option }}
   changed_when: false
+  when: not env_is_wayland
 
 # -----------------------------
-# Session fallback (KDE Autostart)
+# Wayland (KDE Plasma) persistence (user-level)
 # -----------------------------
-# This helps ensure it is applied at login in desktop sessions.
-# Note: On Wayland, setxkbmap may not affect the compositor; this is still harmless.
-- name: Ensure KDE autostart directory exists
+# On KDE Plasma Wayland, setxkbmap and Xorg config generally won't affect the compositor.
+# We configure KDE's keyboard settings via kxkbrc, using kwriteconfig5.
+- name: Check kwriteconfig5 exists (Wayland)
+  ansible.builtin.command: kwriteconfig5 --version
+  register: kwriteconfig_check
+  changed_when: false
+  failed_when: false
+  when: env_is_wayland
+
+- name: Fail fast if kwriteconfig5 is missing (Wayland)
+  ansible.builtin.fail:
+    msg: >-
+      Wayland session detected (XDG_SESSION_TYPE=wayland) but kwriteconfig5 is missing.
+      On KDE Plasma Wayland, setxkbmap/Xorg config won't reliably apply.
+      Install KDE tools (kwriteconfig5) or switch to an X11 session.
+  when:
+    - env_is_wayland
+    - kwriteconfig_check.rc != 0
+
+- name: Configure KDE keyboard XKB options (Wayland, user-level)
+  ansible.builtin.command: >
+    kwriteconfig5 --file kxkbrc --group Layout --key Options {{ caps_escape_xkb_option }}
+  changed_when: true
+  when:
+    - env_is_wayland
+    - kwriteconfig_check.rc == 0
+
+- name: Inform user about Wayland apply behaviour
+  ansible.builtin.debug:
+    msg: >-
+      Wayland session detected. KDE config updated (kxkbrc). You may need to log out and log back in
+      for the key swap to fully apply.
+  when:
+    - env_is_wayland
+    - kwriteconfig_check.rc == 0
+
+# -----------------------------
+# Optional: KDE Autostart fallback (X11 only)
+# -----------------------------
+# Helps ensure it is applied at login in desktop X11 sessions.
+- name: Ensure KDE autostart directory exists (X11 fallback)
   ansible.builtin.file:
     path: "{{ ansible_env.HOME }}/.config/autostart"
     state: directory
     mode: "0755"
+  when: not env_is_wayland
 
-- name: Install autostart entry to apply caps/escape swap at login
+- name: Install autostart entry to apply caps/escape swap at login (X11 fallback)
   ansible.builtin.copy:
     dest: "{{ ansible_env.HOME }}/.config/autostart/caps-escape-swap.desktop"
     mode: "0644"
@@ -106,3 +164,4 @@
       Terminal=false
       X-GNOME-Autostart-enabled=true
       X-KDE-autostart-after=panel
+  when: not env_is_wayland
