@@ -1,138 +1,227 @@
-# env-installer
+# env-installer (Ansible)
 
-Cross-platform, **fail-fast**, **feature-flag-driven** environment installer powered by **Ansible**.
+A small, explicit “environment installer” that lets each host declare **intent** (profiles) and produces an **install plan** (feature flags), then installs only what’s enabled.
 
-## Goals
+Design goals:
 
-- Run on:
-  - Debian-family (Debian / Ubuntu / Lubuntu / Proxmox)
-  - Arch-family (Arch / Omarchy)
-  - macOS
-- Provide an **idempotent**, scriptable way to configure a system.
-- Support:
-  - **Full install**: all enabled features
-  - **Partial install**: enable only selected features via profiles / overrides
-- Be:
-  - Predictable
-  - Explicit
-  - Convention-driven
-  - Safe to re-run
+- **Explicit > implicit**: key decisions live in a small number of central files.
+- **Fail fast**: unknown profiles and unsupported feature/platform combos stop early with clear errors.
+- **Minimal “magic”**: loops are used only where they reduce copy/paste drift and are heavily commented.
+- **Easy to extend**: adding a new install item is a small, repeatable set of edits.
 
-## Mental model
+---
 
-- **Profiles** describe machines (primary UI)
-- **Feature flags** describe intent (`install_*`)
-- **Playbooks** orchestrate
-- **Roles** implement complexity
-- **Unsupported == failure** (no silent skipping)
+## Repository structure (relevant parts)
 
-## Key concepts
+```
+ansible.cfg
+inventory/
+  hosts.yml
+  group_vars/
+    all.yml
+  host_vars/
+    thinkpad-x240.yml
+    macbook-2019.yml
+    work_macbook.yml
+playbooks/
+  main.yml
+  _derive_features.yml
+  _assert_supported.yml
+  _install_features.yml
+  features/
+    install_brave.yml
+    install_jq.yml
+    install_lazyvim.yml
+    install_magic_wormhole.yml
+    install_mpv.yml
+    install_netbird.yml
+    install_yt_dlp.yml
+roles/
+  install_packages/
+    tasks/
+      main.yml
+      arch.yml
+      debian.yml
+      macos.yml
+  netbird/
+    defaults/main.yml
+    meta/main.yml
+    tasks/
+      main.yml
+      assert.yml
+      arch.yml
+      debian.yml
+      macos.yml
+      configure.yml
+```
 
-### Profiles (primary UI)
+---
 
-Hosts declare profiles:
+## How it works
+
+### 1) Host declares intent (profiles)
+
+Each host sets:
+
+- `env_pkg_family`: `arch | debian | macos`
+- `env_flavor`: a more specific “flavor” string (e.g. `arch`, `omarchy`, `ubuntu`, `macos`)
+- `env_profiles`: list of profile names
+
+Example (`inventory/host_vars/thinkpad-x240.yml`):
 
 ```yaml
+env_pkg_family: arch
+env_flavor: arch
+
 env_profiles:
   - base
   - vpn
+  - media
+  - dev_cli
 ```
 
-Profiles expand into feature flags using `env_profiles_catalog` (in `group_vars/all.yml`).
+Profiles are defined centrally in `inventory/group_vars/all.yml` as `env_profiles_catalog`.
 
-### Feature flags (intent)
+---
 
-Feature flags are the only way installs happen:
+### 2) Profiles expand to feature flags (derive step)
+
+`playbooks/_derive_features.yml`:
+
+- Validates all profile names are known (fails fast on typos).
+- Expands profiles → `env_features_from_profiles`.
+- Derives **every** feature in `env_known_features` into:
+  - `install_<feature>` (boolean)
+  - `install_<feature>_reason` (`profile`, `override:true|false`, or `default:false`)
+- Prints a plan summary including `env_features_from_profiles`.
+
+This is the **planning layer**: it decides *what* will be installed, not *how*.
+
+---
+
+### 3) Assert support matrix (fail fast)
+
+`playbooks/_assert_supported.yml`:
+
+- Ensures `env_pkg_family` and `env_flavor` are set in host_vars.
+- For each enabled feature, checks `env_feature_support` allows it for this platform/flavor.
+
+---
+
+### 4) Install enabled features (explicit includes)
+
+`playbooks/_install_features.yml` is intentionally explicit (no hidden loops).  
+Each feature file lives at `playbooks/features/install_<feature>.yml`.
+
+Feature implementations typically use:
+
+- `roles/install_packages` for simple package installs, or
+- a dedicated role for complex workflows (services, config, multiple steps), e.g. `roles/netbird`.
+
+---
+
+## Quick start
+
+### Run (all hosts in inventory)
+
+```bash
+ansible-playbook playbooks/main.yml
+```
+
+### Run a single host
+
+```bash
+ansible-playbook playbooks/main.yml -l thinkpad-x240
+```
+
+---
+
+## Current profiles and features
+
+Defined in `inventory/group_vars/all.yml`.
+
+### Profiles (`env_profiles_catalog`)
+
+- `base` → `install_brave`
+- `media` → `install_mpv`
+- `vpn` → `install_netbird`
+- `dev_cli` → `install_jq`, `install_yt_dlp`, `install_magic_wormhole`, `install_lazyvim`
+
+### Known features (`env_known_features`)
+
+- `install_mpv`
+- `install_brave`
+- `install_netbird`
+- `install_jq`
+- `install_yt_dlp`
+- `install_magic_wormhole`
+- `install_lazyvim`
+
+---
+
+## Adding a new installation item
+
+See: `env-installer-add-feature-guide.md`
+
+High level:
+
+1. Add `install_<new>` to `env_known_features` (and optionally a profile).
+2. Add `env_feature_support` entries for your platforms/flavors.
+3. Add package name mappings in `env_package_names` if required.
+4. Create `playbooks/features/install_<new>.yml` (or a role for complex installs).
+5. Add an explicit include in `playbooks/_install_features.yml`:
 
 ```yaml
-install_<feature>: true|false
+- name: Install <new> feature
+  ansible.builtin.import_tasks: "features/install_<new>.yml"
+  when: install_<new> | bool
 ```
 
-Examples: `install_mpv`, `install_brave`, `install_netbird`.
+---
 
-Feature flags are derived from:
+## Notes on package installation
 
-1. `env_feature_defaults` (global defaults)
-2. `env_profiles` → `env_profiles_catalog` (profile enables)
-3. `env_feature_overrides` (optional per-host/manual overrides)
+### `roles/install_packages` (v0)
 
-### Fail-fast support matrix
+Input:
 
-If a feature is enabled but not implemented for the current platform/flavor, the run **fails**.
-
-Support is encoded in `env_feature_support` in `group_vars/all.yml`.
-
-Example desired failure:
-
-```
-Feature 'install_slack' is enabled but unsupported for pkg_family='arch' flavor='omarchy'.
-Either disable this feature or add platform support.
+```yaml
+install_packages_list:
+  - name: "jq"
+    state: present
+  - name: "brave-browser"
+    state: present
+    cask: true   # macOS only
 ```
 
-### Platform identity is explicit
+Behavior:
 
-Each host must declare:
+- **Arch**: repo via `pacman`; AUR heuristic `*-bin` via `yay`; pre-check with `pacman -Q`.
+- **Debian**: `apt` (idempotent).
+- **macOS**: `brew` formulae + casks; installs only missing items.
 
-- `env_pkg_family`: `arch|debian|macos`
-- `env_flavor`: e.g. `arch|omarchy|debian|ubuntu|kubuntu|macos`
+---
 
-This is intentional (less magic, more correctness).
+## Troubleshooting
 
-## Repo layout
+### “Unknown profile(s) found in env_profiles…”
 
-```text
-env-installer/
-├── README.md
-├── ansible.cfg
-├── docs/
-│   └── ANSIBLE.md
-├── inventory/
-│   ├── hosts.yml
-│   └── host_vars/
-│       ├── thinkpad-x240.yml
-│       └── macbook-2019.yml
-├── group_vars/
-│   └── all.yml
-├── playbooks/
-│   ├── main.yml
-│   ├── _derive_features.yml
-│   ├── _assert_supported.yml
-│   ├── _install_features.yml
-│   └── features/
-│       ├── install_mpv.yml
-│       ├── install_brave.yml
-│       └── install_netbird.yml
-└── roles/
-    ├── install_packages/
-    └── netbird/
-```
+A profile name in `inventory/host_vars/<host>.yml` doesn’t exist in `env_profiles_catalog`. Fix the typo or add the profile.
 
-## How to run
+### “Feature 'install_x' is enabled but unsupported…”
 
-From repo root:
+Update `env_feature_support` to allow that feature for your `env_pkg_family` / `env_flavor`.
 
-```sh
-ansible-playbook -i inventory/hosts.yml playbooks/main.yml
-```
+### Homebrew missing on macOS
 
-Run only one host:
+The macOS installer fails fast if `brew` is missing.
 
-```sh
-ansible-playbook -i inventory/hosts.yml playbooks/main.yml --limit thinkpad-x240
-```
+### Arch AUR installs fail because `yay` is missing
 
-## What’s included (skeleton)
+If you request a package ending in `-bin`, the arch installer routes it through `yay`. Install `yay` first or change the package name.
 
-This repo is intentionally minimal but demonstrates the whole pattern:
+---
 
-- **Simple install**: `install_mpv`
-  - Implemented as a feature tasks file that calls `roles/install_packages`.
-- **Simple-but-variable install**: `install_brave`
-  - Uses `env_package_names` mapping so it’s always clear when package choice differs (e.g. `brave` vs `brave-bin`).
-- **Complex install**: `install_netbird`
-  - Implemented as a dedicated role (`roles/netbird`) with per-platform tasks and basic configuration.
+## License
 
-## Notes
-
-- Secrets are not stored in this repo. Inject them via vault / environment / extra-vars.
-- Bootstrap should stay minimal: ensure Ansible exists, then run `playbooks/main.yml`.
+Internal / personal tooling (add a license if you plan to publish).
