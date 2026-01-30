@@ -1,11 +1,71 @@
 # playbooks/_derive_features.yml
-# Derives the final feature flags from:
-# - profiles (env_profiles -> env_profiles_catalog)
-# - overrides (env_feature_overrides)
 #
-# Produces:
-# - install_* booleans (final)
-# - install_*_reason strings (debuggable)
+# PURPOSE
+# -------
+# This playbook derives the *final* install_* feature flags for a host.
+#
+# It is the single place where we convert "profiles + overrides" into:
+#   - install_<feature> booleans (true/false)
+#   - install_<feature>_reason strings ("profile", "override:true", "default:false")
+#
+# WHY THIS EXISTS (Intent vs Implementation)
+# -----------------------------------------
+# - Hosts declare intent via profiles (env_profiles) and optional overrides.
+# - The actual install implementations live elsewhere (feature task files / roles).
+# - This file only decides *what should be installed*, not *how*.
+#
+# INPUTS (Central + explicit)
+# ---------------------------
+# From inventory/group_vars/all.yml:
+#   - env_known_features      : list of all valid install_* flags in the system
+#   - env_profiles_catalog    : mapping of profile -> list of install_* flags
+#
+# From host_vars (per machine):
+#   - env_profiles            : list of profile names applied to this host
+#
+# Optional (host vars, extra-vars, or future):
+#   - env_feature_overrides   : mapping { install_x: true|false }
+#
+# OUTPUTS
+# -------
+# - install_* flags for every item in env_known_features
+# - install_*_reason companion vars
+#
+# WHY WE USE A LOOP HERE
+# ----------------------
+# To keep the system explicit and fail-fast, we require that:
+#   - every installable feature must be listed in env_known_features
+#   - derived variables must exist for all features in that list
+#
+# The loop is intentionally *mechanical* and *transparent*:
+# it sets a boolean for each known feature, and a reason string.
+# This avoids copy/paste drift while keeping the list of features centralized.
+#
+# WHAT WE *DO NOT* DO HERE
+# ------------------------
+# - We do not perform per-feature logic (no special cases for "install_brave", etc.)
+# - We do not compute per-feature "installs package X" strings
+# - We do not include implementation details (apt/brew/pacman/yay/etc.)
+#
+# Those belong in feature task files and roles, not in planning/derivation.
+#
+# PLAN SUMMARY
+# ------------
+# The "plan summary" is intentionally simple and general:
+# - it lists which install_* flags are enabled and why
+# - it does NOT attempt to describe packages or post-install steps
+#
+# This keeps add-new-feature work minimal:
+#   1) add install_<new> to env_known_features (and optionally a profile)
+#   2) add a tasks file to playbooks/features/install_<new>.yml (or a role)
+#   3) add one include line to playbooks/_install_features.yml
+#
+# No updates should be required in this file when adding new installs.
+# (Unless you change the core derivation model itself.)
+
+# -----------------------------
+# Normalise inputs
+# -----------------------------
 
 - name: Ensure env_profiles is defined
   ansible.builtin.set_fact:
@@ -14,6 +74,17 @@
 - name: Ensure env_feature_overrides is defined
   ansible.builtin.set_fact:
     env_feature_overrides: "{{ env_feature_overrides | default({}) }}"
+
+# -----------------------------
+# Expand profiles -> features
+# -----------------------------
+# We map each profile name in env_profiles through env_profiles_catalog.
+#
+# Notes:
+# - map('extract', env_profiles_catalog) returns the list for each profile.
+# - select('defined') drops profiles that aren't in the catalog.
+#   (If you want unknown profiles to hard-fail, we can add an assert elsewhere.)
+# - flatten + unique gives us a clean list of install_* flags enabled by profiles.
 
 - name: Collect features enabled by profiles
   ansible.builtin.set_fact:
@@ -26,6 +97,21 @@
         | flatten
         | unique
       }}
+
+# -----------------------------
+# Derive final install_* flags
+# -----------------------------
+# Precedence:
+#   1) env_feature_overrides[install_x] if present
+#   2) true if install_x is enabled by any profile
+#   3) false otherwise
+#
+# Reason strings:
+#   - "override:true|false"
+#   - "profile"
+#   - "default:false"
+#
+# We generate a derived boolean for *every* known feature to keep state explicit.
 
 - name: Initialize env_feature_reasons
   ansible.builtin.set_fact:
@@ -71,13 +157,30 @@
     "{{ item }}_reason": "{{ env_feature_reasons[item] }}"
   loop: "{{ env_known_features }}"
 
-- name: Debug install plan (clear and explicit)
+# -----------------------------
+# Plan summary (general, no per-feature rules)
+# -----------------------------
+# This gives a clear "what will be installed" view without hiding details.
+#
+# It intentionally prints only:
+#   - enabled install_* flags
+#   - their reason (profile/override/default)
+#
+# The actual "what package(s)" detail remains in feature task files and roles.
+
+- name: Debug install plan summary (clear + general)
   ansible.builtin.debug:
     msg:
       env_pkg_family: "{{ env_pkg_family | default('UNSET') }}"
       env_flavor: "{{ env_flavor | default('UNSET') }}"
       env_profiles: "{{ env_profiles }}"
-      install_plan: >-
+      enabled_features: >-
+        {{
+          env_known_features
+          | select(lambda k: (vars[k] | default(false)) | bool)
+          | list
+        }}
+      enabled_feature_reasons: >-
         {{
           dict(
             (
