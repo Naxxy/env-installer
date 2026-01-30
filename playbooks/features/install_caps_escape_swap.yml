@@ -1,0 +1,108 @@
+# playbooks/features/install_caps_escape_swap.yml
+#
+# Swap CapsLock and Escape keys, with persistence across reboots.
+#
+# Supported:
+# - Debian-family
+# - flavor: kubuntu only
+#
+# Enforcement of support happens in _assert_supported.yml.
+# This file assumes it is only called on supported platforms.
+
+- name: Debug caps/escape swap feature intent
+  ansible.builtin.debug:
+    msg:
+      feature: install_caps_escape_swap
+      enabled: "{{ install_caps_escape_swap }}"
+      reason: "{{ install_caps_escape_swap_reason }}"
+      pkg_family: "{{ env_pkg_family }}"
+      flavor: "{{ env_flavor }}"
+
+# setxkbmap comes from x11-xkb-utils
+- name: Ensure setxkbmap is available
+  become: true
+  ansible.builtin.apt:
+    name: x11-xkb-utils
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: env_pkg_family == "debian"
+
+- name: Set desired XKB option
+  ansible.builtin.set_fact:
+    caps_escape_xkb_option: "caps:swapescape"
+
+# -----------------------------
+# Persistence (system-wide)
+# -----------------------------
+# Debian/Ubuntu commonly store keyboard defaults here.
+# This helps persist across reboots and is a conventional place to manage it.
+- name: Ensure /etc/default/keyboard has XKBOPTIONS set for caps/escape swap
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/default/keyboard
+    regexp: '^XKBOPTIONS='
+    line: 'XKBOPTIONS="{{ caps_escape_xkb_option }}"'
+    create: true
+    mode: "0644"
+
+# -----------------------------
+# Persistence (Xorg)
+# -----------------------------
+# For X11 sessions, an Xorg conf.d snippet is a very reliable persistence mechanism.
+- name: Ensure Xorg keyboard config directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/X11/xorg.conf.d
+    state: directory
+    mode: "0755"
+
+- name: Persist caps/escape swap via Xorg config
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/X11/xorg.conf.d/00-keyboard.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (env-installer)
+      # Swap Caps Lock and Escape
+      Section "InputClass"
+          Identifier "keyboard defaults"
+          MatchIsKeyboard "on"
+          Option "XkbOptions" "{{ caps_escape_xkb_option }}"
+      EndSection
+
+# -----------------------------
+# Session apply (current login)
+# -----------------------------
+# Apply immediately for the current session (useful on first run).
+# We keep changed_when false to avoid noisy "changed" output for a session-state command.
+- name: Apply caps/escape swap for current session
+  ansible.builtin.command: >
+    setxkbmap -option {{ caps_escape_xkb_option }}
+  changed_when: false
+
+# -----------------------------
+# Session fallback (KDE Autostart)
+# -----------------------------
+# This helps ensure it is applied at login in desktop sessions.
+# Note: On Wayland, setxkbmap may not affect the compositor; this is still harmless.
+- name: Ensure KDE autostart directory exists
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.config/autostart"
+    state: directory
+    mode: "0755"
+
+- name: Install autostart entry to apply caps/escape swap at login
+  ansible.builtin.copy:
+    dest: "{{ ansible_env.HOME }}/.config/autostart/caps-escape-swap.desktop"
+    mode: "0644"
+    content: |
+      [Desktop Entry]
+      Type=Application
+      Version=1.0
+      Name=Caps/Escape Swap
+      Comment=Swap CapsLock and Escape at login (managed by env-installer)
+      Exec=setxkbmap -option {{ caps_escape_xkb_option }}
+      Terminal=false
+      X-GNOME-Autostart-enabled=true
+      X-KDE-autostart-after=panel

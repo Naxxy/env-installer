@@ -10,11 +10,15 @@ env_known_features:
   - install_yt_dlp
   - install_magic_wormhole
   - install_lazyvim
+  - install_caps_escape_swap
 
 # Profile catalog (primary user interface): profile -> list of features enabled.
 env_profiles_catalog:
   base:
     - install_brave
+
+  keyboard:
+    - install_caps_escape_swap
 
   media:
     - install_mpv
@@ -65,6 +69,9 @@ env_feature_support:
     arch: { flavors: ["all"] }
     debian: { flavors: ["all"] }
     macos: { flavors: ["all"] }
+
+  install_caps_escape_swap:
+    debian: { flavors: ["kubuntu"] }
 
 # Central mapping to make package-name differences obvious and auditable.
 # Features should refer to these rather than embedding OS logic everywhere.

@@ -2,6 +2,10 @@
 # Explicit includes (no hidden loops),
 # so it's always clear which features exist and how they install.
 
+- name: Install CapsLock / Escape swap
+  ansible.builtin.import_tasks: "features/install_caps_escape_swap.yml"
+  when: install_caps_escape_swap | bool
+
 - name: Install mpv feature
   ansible.builtin.import_tasks: "features/install_mpv.yml"
   when: install_mpv | bool
