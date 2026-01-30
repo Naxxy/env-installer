@@ -1,51 +1,80 @@
+# inventory/group_vars/all.yml
+
 # All features known to the system.
 # These are the only install_* keys that will be derived and asserted.
 env_known_features:
   - install_mpv
   - install_brave
   - install_netbird
+  - install_jq
+  - install_yt_dlp
+  - install_magic_wormhole
+  - install_lazyvim
 
 # Default state for each known feature (applied unless enabled by a profile or overridden).
 env_feature_defaults:
   install_mpv: false
   install_brave: false
   install_netbird: false
+  install_jq: false
+  install_yt_dlp: false
+  install_magic_wormhole: false
+  install_lazyvim: false
 
 # Profile catalog (primary user interface): profile -> list of features enabled.
 env_profiles_catalog:
   base:
     - install_brave
+
   media:
     - install_mpv
+
   vpn:
     - install_netbird
+
+  dev_cli:
+    - install_jq
+    - install_yt_dlp
+    - install_magic_wormhole
+    - install_lazyvim
 
 # Support matrix: feature -> pkg_family -> allowed flavors
 # Use explicit 'all' to mean "supported for any flavor of this family".
 env_feature_support:
   install_mpv:
-    arch:
-      flavors: ["all"]
-    debian:
-      flavors: ["all"]
-    macos:
-      flavors: ["all"]
+    arch: { flavors: ["all"] }
+    debian: { flavors: ["all"] }
+    macos: { flavors: ["all"] }
 
   install_brave:
-    arch:
-      flavors: ["all"]
-    debian:
-      flavors: ["all"]
-    macos:
-      flavors: ["all"]
+    arch: { flavors: ["all"] }
+    debian: { flavors: ["all"] }
+    macos: { flavors: ["all"] }
 
   install_netbird:
-    arch:
-      flavors: ["arch", "omarchy"]
-    debian:
-      flavors: ["debian", "ubuntu", "kubuntu"]
-    macos:
-      flavors: ["macos"]
+    arch: { flavors: ["arch", "omarchy"] }
+    debian: { flavors: ["debian", "ubuntu", "kubuntu"] }
+    macos: { flavors: ["macos"] }
+
+  install_jq:
+    arch: { flavors: ["all"] }
+    debian: { flavors: ["all"] }
+    macos: { flavors: ["all"] }
+
+  install_yt_dlp:
+    arch: { flavors: ["all"] }
+    debian: { flavors: ["all"] }
+    macos: { flavors: ["all"] }
+
+  install_magic_wormhole:
+    arch: { flavors: ["all"] }
+    debian: { flavors: ["all"] }
+    macos: { flavors: ["all"] }
+
+  install_lazyvim:
+    arch: { flavors: ["all"] }
+    debian: { flavors: ["all"] }
+    macos: { flavors: ["all"] }
 
 # Central mapping to make package-name differences obvious and auditable.
 # Features should refer to these rather than embedding OS logic everywhere.
@@ -55,5 +84,41 @@ env_package_names:
 
   brave:
     arch: "brave-bin"           # typical AUR choice
-    debian: "brave-browser"     # if you later add repo setup; placeholder name here
+    debian: "brave-browser"     # placeholder until repo setup exists
     macos: "brave-browser"      # brew cask name
+
+  jq:
+    all: "jq"
+
+  yt_dlp:
+    arch: "yt-dlp"
+    debian: "yt-dlp"
+    macos: "yt-dlp"
+
+  magic_wormhole:
+    arch: "magic-wormhole"
+    macos: "magic-wormhole"
+    # Debian client install will use pipx (see feature task file)
+
+  # LazyVim is NOT a package; we install Neovim + deps via packages, then clone.
+  lazyvim_deps:
+    arch:
+      - "neovim"
+      - "git"
+      - "ripgrep"
+      - "fd"
+    debian:
+      - "neovim"
+      - "git"
+      - "ripgrep"
+      - "fd-find"
+    macos:
+      - "neovim"
+      - "git"
+      - "ripgrep"
+      - "fd"
+
+  pipx:
+    arch: "python-pipx"
+    debian: "pipx"
+    macos: "pipx"

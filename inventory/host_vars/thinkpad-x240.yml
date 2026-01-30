@@ -4,6 +4,8 @@ env_flavor: arch
 env_profiles:
   - base
   - vpn
+  - media
+  - dev_cli
 
 # Secrets should be injected (vault/env/extra-vars). Placeholder is fine for skeleton.
 netbird_setup_key: "NB_SETUP_KEY_FROM_VAULT_OR_SECRET"

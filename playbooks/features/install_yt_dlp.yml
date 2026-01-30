@@ -1,0 +1,34 @@
+# playbooks/features/install_yt_dlp.yml
+- name: Debug yt-dlp feature intent
+  ansible.builtin.debug:
+    msg:
+      feature: install_yt_dlp
+      enabled: "{{ install_yt_dlp }}"
+      reason: "{{ install_yt_dlp_reason }}"
+      pkg_family: "{{ env_pkg_family }}"
+      flavor: "{{ env_flavor }}"
+
+- name: Choose yt-dlp package name for this platform
+  ansible.builtin.set_fact:
+    yt_dlp_pkg_name: >-
+      {{
+        (
+          env_package_names.yt_dlp.arch
+          if env_pkg_family == 'arch'
+          else
+            (
+              env_package_names.yt_dlp.debian
+              if env_pkg_family == 'debian'
+              else
+                env_package_names.yt_dlp.macos
+            )
+        )
+      }}
+
+- name: Install yt-dlp
+  ansible.builtin.include_role:
+    name: install_packages
+  vars:
+    install_packages_list:
+      - name: "{{ yt_dlp_pkg_name }}"
+        state: present

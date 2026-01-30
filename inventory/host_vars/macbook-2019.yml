@@ -4,3 +4,4 @@ env_flavor: macos
 env_profiles:
   - base
   - media
+  - dev_cli

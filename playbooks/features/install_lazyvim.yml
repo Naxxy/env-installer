@@ -1,0 +1,77 @@
+# playbooks/features/install_lazyvim.yml
+- name: Debug LazyVim feature intent
+  ansible.builtin.debug:
+    msg:
+      feature: install_lazyvim
+      enabled: "{{ install_lazyvim }}"
+      reason: "{{ install_lazyvim_reason }}"
+      pkg_family: "{{ env_pkg_family }}"
+      flavor: "{{ env_flavor }}"
+
+- name: Choose LazyVim dependency packages for this platform
+  ansible.builtin.set_fact:
+    lazyvim_dep_pkgs: >-
+      {{
+        (
+          env_package_names.lazyvim_deps.arch
+          if env_pkg_family == 'arch'
+          else
+            (
+              env_package_names.lazyvim_deps.debian
+              if env_pkg_family == 'debian'
+              else
+                env_package_names.lazyvim_deps.macos
+            )
+        )
+      }}
+
+- name: Install LazyVim dependencies (neovim, git, ripgrep, fd)
+  ansible.builtin.include_role:
+    name: install_packages
+  vars:
+    install_packages_list: >-
+      {{
+        lazyvim_dep_pkgs
+        | map('community.general.dict_kv', 'name')
+        | list
+      }}
+  when: lazyvim_dep_pkgs | length > 0
+  vars:
+    # avoid needing extra collections: construct list inline
+    _unused: true
+  # NOTE: remove the above "community.general.dict_kv" if you don't want collections;
+  # we’ll build the list without it in the next task.
+
+- name: Install LazyVim dependencies (no-collections variant)
+  ansible.builtin.include_role:
+    name: install_packages
+  vars:
+    install_packages_list: "{{ lazyvim_dep_pkgs | map('regex_replace', '^(.*)$', '{\"name\":\"\\1\",\"state\":\"present\"}') | map('from_yaml') | list }}"
+
+- name: Determine LazyVim target directory
+  ansible.builtin.set_fact:
+    lazyvim_nvim_dir: "{{ ansible_env.HOME }}/.config/nvim"
+
+- name: Check if ~/.config/nvim already exists
+  ansible.builtin.stat:
+    path: "{{ lazyvim_nvim_dir }}"
+  register: lazyvim_nvim_stat
+
+- name: Fail if ~/.config/nvim already exists (avoid clobbering)
+  ansible.builtin.fail:
+    msg: >-
+      LazyVim install would write to {{ lazyvim_nvim_dir }}, but it already exists.
+      Move/backup that directory first, then re-run.
+  when: lazyvim_nvim_stat.stat.exists
+
+- name: Clone LazyVim starter into ~/.config/nvim
+  ansible.builtin.git:
+    repo: "https://github.com/LazyVim/starter"
+    dest: "{{ lazyvim_nvim_dir }}"
+    depth: 1
+    update: false
+
+- name: Remove .git directory (so it becomes "your config", not a git checkout)
+  ansible.builtin.file:
+    path: "{{ lazyvim_nvim_dir }}/.git"
+    state: absent
