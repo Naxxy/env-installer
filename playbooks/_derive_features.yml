@@ -33,35 +33,32 @@
 #
 # WHY WE USE A LOOP HERE
 # ----------------------
-# To keep the system explicit and fail-fast, we require that:
-#   - every installable feature must be listed in env_known_features
-#   - derived variables must exist for all features in that list
-#
-# The loop is intentionally *mechanical* and *transparent*:
-# it sets a boolean for each known feature, and a reason string.
-# This avoids copy/paste drift while keeping the list of features centralized.
+# We want derived state for *every known feature* without copy/paste drift.
+# The loop is intentionally mechanical + transparent:
+# - For each feature name in env_known_features (e.g. "install_mpv"):
+#   - set vars["install_mpv"] = true/false
+#   - set vars["install_mpv_reason"] = "profile"/"override:true"/"default:false"
 #
 # WHAT WE *DO NOT* DO HERE
 # ------------------------
-# - We do not perform per-feature logic (no special cases for "install_brave", etc.)
-# - We do not compute per-feature "installs package X" strings
-# - We do not include implementation details (apt/brew/pacman/yay/etc.)
+# - No per-feature logic (no special cases for specific installs)
+# - No package names, no OS-specific commands, no post-install steps
 #
-# Those belong in feature task files and roles, not in planning/derivation.
+# Those belong in feature task files / roles, not in the planning layer.
 #
 # PLAN SUMMARY
 # ------------
-# The "plan summary" is intentionally simple and general:
-# - it lists which install_* flags are enabled and why
-# - it does NOT attempt to describe packages or post-install steps
+# The plan summary is intentionally generic:
+# - it lists enabled install_* flags and the reason they are enabled
+# - it also shows env_features_from_profiles so you can see what profiles expanded to
 #
-# This keeps add-new-feature work minimal:
-#   1) add install_<new> to env_known_features (and optionally a profile)
-#   2) add a tasks file to playbooks/features/install_<new>.yml (or a role)
-#   3) add one include line to playbooks/_install_features.yml
+# ADDING A NEW FEATURE (minimal work)
+# ----------------------------------
+# 1) Add install_<new> to env_known_features (and optionally add it to a profile)
+# 2) Add playbooks/features/install_<new>.yml (or a role)
+# 3) Add one include line to playbooks/_install_features.yml
 #
-# No updates should be required in this file when adding new installs.
-# (Unless you change the core derivation model itself.)
+# This file should not need changes when you add new install items.
 
 # -----------------------------
 # Normalise inputs
@@ -76,15 +73,34 @@
     env_feature_overrides: "{{ env_feature_overrides | default({}) }}"
 
 # -----------------------------
+# Fail fast: unknown profiles
+# -----------------------------
+# We do NOT silently ignore typos in env_profiles.
+# If a host specifies a profile that isn't present in env_profiles_catalog, fail now
+# with a clear message listing the unknown names.
+
+- name: Compute unknown profiles (profiles not in env_profiles_catalog)
+  ansible.builtin.set_fact:
+    env_unknown_profiles: >-
+      {{
+        (env_profiles | default([]))
+        | difference((env_profiles_catalog.keys() | list) | default([]))
+      }}
+
+- name: Fail if any unknown profiles are present
+  ansible.builtin.assert:
+    that:
+      - env_unknown_profiles | length == 0
+    fail_msg: >-
+      Unknown profile(s) found in env_profiles: {{ env_unknown_profiles }}.
+      Valid profiles are: {{ env_profiles_catalog.keys() | list }}.
+      Fix inventory/host_vars/<host>.yml (env_profiles) or add the profile to env_profiles_catalog.
+
+# -----------------------------
 # Expand profiles -> features
 # -----------------------------
 # We map each profile name in env_profiles through env_profiles_catalog.
-#
-# Notes:
-# - map('extract', env_profiles_catalog) returns the list for each profile.
-# - select('defined') drops profiles that aren't in the catalog.
-#   (If you want unknown profiles to hard-fail, we can add an assert elsewhere.)
-# - flatten + unique gives us a clean list of install_* flags enabled by profiles.
+# Because we assert unknown profiles above, every profile here must exist in the catalog.
 
 - name: Collect features enabled by profiles
   ansible.builtin.set_fact:
@@ -92,7 +108,6 @@
       {{
         (env_profiles | default([]))
         | map('extract', env_profiles_catalog)
-        | select('defined')
         | list
         | flatten
         | unique
@@ -110,8 +125,6 @@
 #   - "override:true|false"
 #   - "profile"
 #   - "default:false"
-#
-# We generate a derived boolean for *every* known feature to keep state explicit.
 
 - name: Initialize env_feature_reasons
   ansible.builtin.set_fact:
@@ -160,13 +173,6 @@
 # -----------------------------
 # Plan summary (general, no per-feature rules)
 # -----------------------------
-# This gives a clear "what will be installed" view without hiding details.
-#
-# It intentionally prints only:
-#   - enabled install_* flags
-#   - their reason (profile/override/default)
-#
-# The actual "what package(s)" detail remains in feature task files and roles.
 
 - name: Debug install plan summary (clear + general)
   ansible.builtin.debug:
@@ -174,6 +180,7 @@
       env_pkg_family: "{{ env_pkg_family | default('UNSET') }}"
       env_flavor: "{{ env_flavor | default('UNSET') }}"
       env_profiles: "{{ env_profiles }}"
+      env_features_from_profiles: "{{ env_features_from_profiles }}"
       enabled_features: >-
         {{
           env_known_features
