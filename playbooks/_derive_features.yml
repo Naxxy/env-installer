@@ -171,6 +171,31 @@
   loop: "{{ env_known_features }}"
 
 # -----------------------------
+# Prepare "plan summary" values (explicit, no Jinja lambdas)
+# -----------------------------
+# IMPORTANT:
+# We avoid fancy template tricks inside debug output.
+# Some Ansible/Jinja versions do not support lambda-style filtering, and it becomes
+# painful to debug. Instead, we build the two summary structures explicitly:
+#
+# - env_enabled_features: [install_brave, install_mpv, ...]
+# - env_enabled_feature_reasons: {install_brave: "profile", ...}
+#
+# This is more verbose, but extremely transparent.
+
+- name: Initialize enabled-features summary vars
+  ansible.builtin.set_fact:
+    env_enabled_features: []
+    env_enabled_feature_reasons: {}
+
+- name: Add enabled features to summary (and include reasons)
+  ansible.builtin.set_fact:
+    env_enabled_features: "{{ env_enabled_features + [ item ] }}"
+    env_enabled_feature_reasons: "{{ env_enabled_feature_reasons | combine({ item: (vars[item ~ '_reason'] | default('MISSING_REASON')) }) }}"
+  loop: "{{ env_known_features }}"
+  when: (vars[item] | default(false)) | bool
+
+# -----------------------------
 # Plan summary (general, no per-feature rules)
 # -----------------------------
 
@@ -181,29 +206,5 @@
       env_flavor: "{{ env_flavor | default('UNSET') }}"
       env_profiles: "{{ env_profiles }}"
       env_features_from_profiles: "{{ env_features_from_profiles }}"
-      enabled_features: >-
-        {{
-          env_known_features
-          | select(lambda k: (vars[k] | default(false)) | bool)
-          | list
-        }}
-      enabled_feature_reasons: >-
-        {{
-          dict(
-            (
-              env_known_features
-              | select(lambda k: (vars[k] | default(false)) | bool)
-              | list
-            )
-            |
-            zip(
-              (
-                env_known_features
-                | select(lambda k: (vars[k] | default(false)) | bool)
-                | map('regex_replace', '^(.*)$', '\\1_reason')
-                | map('extract', vars)
-                | list
-              )
-            )
-          )
-        }}
+      enabled_features: "{{ env_enabled_features }}"
+      enabled_feature_reasons: "{{ env_enabled_feature_reasons }}"
