@@ -1,4 +1,5 @@
 # playbooks/features/install_lazyvim.yml
+
 - name: Debug LazyVim feature intent
   ansible.builtin.debug:
     msg:
@@ -32,21 +33,11 @@
     install_packages_list: >-
       {{
         lazyvim_dep_pkgs
-        | map('community.general.dict_kv', 'name')
+        | map('regex_replace', '^(.*)$', '{\"name\":\"\\1\",\"state\":\"present\"}')
+        | map('from_yaml')
         | list
       }}
   when: lazyvim_dep_pkgs | length > 0
-  vars:
-    # avoid needing extra collections: construct list inline
-    _unused: true
-  # NOTE: remove the above "community.general.dict_kv" if you don't want collections;
-  # we’ll build the list without it in the next task.
-
-- name: Install LazyVim dependencies (no-collections variant)
-  ansible.builtin.include_role:
-    name: install_packages
-  vars:
-    install_packages_list: "{{ lazyvim_dep_pkgs | map('regex_replace', '^(.*)$', '{\"name\":\"\\1\",\"state\":\"present\"}') | map('from_yaml') | list }}"
 
 - name: Determine LazyVim target directory
   ansible.builtin.set_fact:

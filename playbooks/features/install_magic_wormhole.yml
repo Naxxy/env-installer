@@ -1,4 +1,5 @@
 # playbooks/features/install_magic_wormhole.yml
+
 - name: Debug magic-wormhole feature intent
   ansible.builtin.debug:
     msg:
@@ -24,7 +25,7 @@
         state: present
   when: env_pkg_family in ["arch", "macos"]
 
-# Debian: pipx (client isn’t a reliable apt package across releases; keep it explicit + idempotent)
+# Debian: pipx (explicit + idempotent)
 - name: Install pipx (debian)
   ansible.builtin.include_role:
     name: install_packages
@@ -34,8 +35,31 @@
         state: present
   when: env_pkg_family == "debian"
 
-- name: Check if magic-wormhole is already installed via pipx (debian)
-  ansible.builtin.command: pipx list
+# Optional but helpful: ensure ~/.local/bin is present in PATH for future shells.
+# (pipx still works either way; this is just quality-of-life)
+- name: Check if pipx ensurepath is needed (debian)
+  ansible.builtin.command: pipx environment
+  register: pipx_env
+  changed_when: false
+  failed_when: false
+  when: env_pkg_family == "debian"
+
+- name: Run pipx ensurepath (best-effort, debian)
+  ansible.builtin.command: pipx ensurepath
+  register: pipx_ensurepath
+  changed_when: true
+  failed_when: false
+  when: >-
+    env_pkg_family == "debian"
+    and
+    (
+      (pipx_env.rc != 0)
+      or
+      ('bin dir' not in (pipx_env.stdout | default('') | lower))
+    )
+
+- name: List pipx packages (debian)
+  ansible.builtin.command: pipx list --short
   register: pipx_list
   changed_when: false
   failed_when: false
@@ -46,7 +70,7 @@
   register: pipx_install_wormhole
   changed_when: true
   failed_when: pipx_install_wormhole.rc != 0
-  when: >
+  when: >-
     env_pkg_family == "debian"
     and
     (

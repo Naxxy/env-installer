@@ -1,6 +1,5 @@
 # playbooks/_derive_features.yml
 # Derives the final feature flags from:
-# - defaults (env_feature_defaults)
 # - profiles (env_profiles -> env_profiles_catalog)
 # - overrides (env_feature_overrides)
 #
@@ -32,7 +31,7 @@
   ansible.builtin.set_fact:
     env_feature_reasons: {}
 
-- name: Derive final feature flags (defaults + profiles + overrides)
+- name: Derive final feature flags (profiles + overrides; default=false)
   ansible.builtin.set_fact:
     "{{ item }}": >-
       {{
@@ -44,11 +43,11 @@
               true
               if (item in (env_features_from_profiles | default([])))
               else
-                (env_feature_defaults[item] | default(false))
+                false
             )
         )
       }}
-    "env_feature_reasons": >-
+    env_feature_reasons: >-
       {{
         env_feature_reasons
         | combine({
@@ -60,7 +59,7 @@
                   'profile'
                   if (item in (env_features_from_profiles | default([])))
                   else
-                    'default'
+                    'default:false'
                 )
             )
           }, recursive=True)
@@ -72,45 +71,29 @@
     "{{ item }}_reason": "{{ env_feature_reasons[item] }}"
   loop: "{{ env_known_features }}"
 
-- name: Debug derived features (auto-generated)
+- name: Debug install plan (clear and explicit)
   ansible.builtin.debug:
     msg:
       env_pkg_family: "{{ env_pkg_family | default('UNSET') }}"
       env_flavor: "{{ env_flavor | default('UNSET') }}"
       env_profiles: "{{ env_profiles }}"
-      env_features_from_profiles: "{{ env_features_from_profiles }}"
-      derived_features: >-
+      install_plan: >-
         {{
           dict(
-            (env_known_features | map('regex_replace', '^(.*)$', '\\1') | list)
-            |
-            zip(env_known_features | map('extract', vars) | list)
-          )
-          | combine(
-              dict(
-                (env_known_features | map('regex_replace', '^(.*)$', '\\1_reason') | list)
-                |
-                zip(env_known_features | map('regex_replace', '^(.*)$', '\\1_reason') | map('extract', vars) | list)
-              ),
-              recursive=True
+            (
+              env_known_features
+              | select(lambda k: (vars[k] | default(false)) | bool)
+              | list
             )
-        }}
-
-- name: Debug enabled derived features (auto-generated)
-  ansible.builtin.debug:
-    msg:
-      enabled_features: >-
-        {{
-          env_known_features
-          | select('in', vars.keys() | list)
-          | select(lambda k: (vars[k] | default(false)) | bool)
-          | list
-        }}
-      enabled_feature_reasons: >-
-        {{
-          env_known_features
-          | select(lambda k: (vars[k] | default(false)) | bool)
-          | map('regex_replace', '^(.*)$', '\\1_reason')
-          | map('extract', vars)
-          | list
+            |
+            zip(
+              (
+                env_known_features
+                | select(lambda k: (vars[k] | default(false)) | bool)
+                | map('regex_replace', '^(.*)$', '\\1_reason')
+                | map('extract', vars)
+                | list
+              )
+            )
+          )
         }}

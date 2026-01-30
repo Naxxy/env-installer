@@ -1,17 +1,9 @@
 # roles/netbird/tasks/macos.yml
-# Installs NetBird on macOS using Homebrew, per NetBird docs. :contentReference[oaicite:2]{index=2}
-# Supports:
-# - netbird_macos_variant=cli -> formula + daemon service install/start
-# - netbird_macos_variant=ui  -> cask install (GUI app)
+# macOS NetBird (CLI-only for now).
+# - Install CLI via Homebrew: netbirdio/tap/netbird
+# - Ensure the daemon service is installed and started
 
-- name: Assert netbird_macos_variant is valid
-  ansible.builtin.assert:
-    that:
-      - netbird_macos_variant in ["cli", "ui"]
-    fail_msg: >-
-      netbird_macos_variant must be one of: cli, ui. Got '{{ netbird_macos_variant }}'.
-
-- name: Install NetBird (macOS, CLI)
+- name: Install NetBird CLI (macOS)
   ansible.builtin.include_role:
     name: install_packages
   vars:
@@ -19,52 +11,34 @@
       - name: "{{ netbird_macos_cli_pkg }}"
         state: present
         cask: false
-  when: netbird_macos_variant == "cli"
 
-- name: Install NetBird (macOS, UI app)
-  ansible.builtin.include_role:
-    name: install_packages
-  vars:
-    install_packages_list:
-      - name: "{{ netbird_macos_ui_cask }}"
-        state: present
-        cask: true
-  when: netbird_macos_variant == "ui"
-
-# If CLI installed, ensure the daemon service exists and is running.
-# NetBird docs show:
-#   sudo netbird service install
-#   sudo netbird service start :contentReference[oaicite:3]{index=3}
-- name: Check netbird service status (macOS, CLI)
+- name: Check netbird service status (macOS)
   become: true
   ansible.builtin.command: netbird service status
   register: netbird_service_status
   changed_when: false
   failed_when: false
-  when: netbird_macos_variant == "cli"
 
-- name: Install netbird service (macOS, CLI) if missing
+- name: Install netbird service (macOS) if missing
   become: true
   ansible.builtin.command: netbird service install
   register: netbird_service_install
   changed_when: true
   failed_when: netbird_service_install.rc != 0
-  when: >
-    netbird_macos_variant == "cli" and
-    (
-      netbird_service_status.rc != 0 or
-      ('not installed' in (netbird_service_status.stdout | default('') | lower))
-    )
+  when: >-
+    (netbird_service_status.rc != 0)
+    or
+    ('not installed' in (netbird_service_status.stdout | default('') | lower))
+    or
+    ('not found' in (netbird_service_status.stdout | default('') | lower))
 
-- name: Start netbird service (macOS, CLI) if not running
+- name: Start netbird service (macOS) if not running
   become: true
   ansible.builtin.command: netbird service start
   register: netbird_service_start
   changed_when: true
   failed_when: netbird_service_start.rc != 0
-  when: >
-    netbird_macos_variant == "cli" and
-    (
-      netbird_service_status.rc != 0 or
-      ('running' not in (netbird_service_status.stdout | default('') | lower))
-    )
+  when: >-
+    (netbird_service_status.rc != 0)
+    or
+    ('running' not in (netbird_service_status.stdout | default('') | lower))

@@ -11,16 +11,6 @@ env_known_features:
   - install_magic_wormhole
   - install_lazyvim
 
-# Default state for each known feature (applied unless enabled by a profile or overridden).
-env_feature_defaults:
-  install_mpv: false
-  install_brave: false
-  install_netbird: false
-  install_jq: false
-  install_yt_dlp: false
-  install_magic_wormhole: false
-  install_lazyvim: false
-
 # Profile catalog (primary user interface): profile -> list of features enabled.
 env_profiles_catalog:
   base:
