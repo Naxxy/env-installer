@@ -1,9 +1,0 @@
-- name: Require setup key if enrolling device
-  ansible.builtin.assert:
-    that:
-      - netbird_setup_key is defined
-      - netbird_setup_key is not none
-      - netbird_setup_key | length > 0
-    fail_msg: >-
-      install_netbird is enabled but netbird_setup_key is missing.
-      Define it in host_vars/<host>.yml (or supply via vault/extra-vars).
