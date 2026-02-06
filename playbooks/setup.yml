@@ -1,0 +1,154 @@
+---
+- name: Baseline installer (macOS + Omarchy)
+  hosts: all
+  gather_facts: true
+
+  vars:
+    # INSTALL CATALOG
+    # ---------------
+    # What this is:
+    # - A single, declarative “source of truth” for installs.
+    # - Each item (e.g. brave) contains per-platform details (macos/omarchy).
+    #
+    # Why we want this shape:
+    # - You can see support per platform at a glance.
+    # - Missing per-platform details can be made to fail fast (instead of silently skipping).
+    # - It’s easy to add an item: add a new key + its macos/omarchy install details.
+    #
+    # Skip precedence (highest → lowest):
+    # 1) Host override: env_install_overrides.<item>.skip
+    #    - Lets one host opt-out/opt-in regardless of catalog defaults.
+    # 2) Platform-level: installs.<item>.<platform>.skip
+    #    - Lets an item be skipped only on one platform (e.g. skip on macOS only).
+    # 3) Item-level: installs.<item>.skip
+    #    - Lets an item default to skipped globally unless overridden.
+    # 4) Default: false
+    #    - Installs run unless explicitly skipped somewhere.
+    installs:
+      brave:
+        # DEFAULT SKIP EXAMPLE
+        # --------------------
+        # What this does:
+        # - If you set skip: true here, qutebrowser is skipped on ALL platforms by default.
+        #
+        # Why this exists:
+        # - Demonstrates how to keep an item in the catalog but default-disable it.
+        # - You can later re-enable per platform (installs.qutebrowser.macos.skip=false)
+        #   or per host (env_install_overrides.qutebrowser.skip=false).
+        skip: false
+        macos:
+          # Installs Brave via Homebrew cask on macOS.
+          cask: "brave-browser"
+          skip: false
+        omarchy:
+          # Brave is commonly installed from AUR on Arch/Omarchy (brave-bin).
+          # This requires yay. If yay is missing, we fail (unless skip=true).
+          yay: "brave-bin"
+          skip: false
+
+      yt_dlp:
+        macos:
+          brew: "yt-dlp"
+          skip: false
+        omarchy:
+          pacman: "yt-dlp"
+          skip: false
+
+      mpv:
+        macos:
+          brew: "mpv"
+          skip: false
+        omarchy:
+          pacman: "mpv"
+          skip: false
+
+      tmux:
+        macos:
+          brew: "tmux"
+          skip: false
+        omarchy:
+          pacman: "tmux"
+          skip: false
+
+      neovim:
+        macos:
+          brew: "neovim"
+          skip: false
+        omarchy:
+          pacman: "neovim"
+          skip: false
+
+      netbird:
+        macos:
+          # Default to CLI install so it can be configured headlessly if you later want.
+          brew: "netbirdio/tap/netbird"
+          skip: false
+        omarchy:
+          pacman: "netbird"
+          skip: false
+
+      qutebrowser:
+        macos:
+          brew: "qutebrowser"
+          skip: false
+        omarchy:
+          pacman: "qutebrowser"
+          skip: false
+
+  # ============================
+  # PRE-INSTALL TASKS
+  # ============================
+  pre_tasks:
+    - name: "Preflight: assert env_platform is explicitly defined (fail fast to prevent wrong installs)"
+      # What this does:
+      # - Ensures every host declares env_platform (macos or omarchy).
+      #
+      # Why it’s needed:
+      # - Prevents accidental “auto-detection” mistakes.
+      # - Stops you from running Omarchy commands on macOS or vice-versa.
+      ansible.builtin.assert:
+        that:
+          - env_platform is defined
+          - env_platform in ["macos", "omarchy"]
+        fail_msg: >-
+          env_platform must be set per-host to one of: macos, omarchy.
+          Example: inventory/host_vars/<host>.yml:
+            env_platform: omarchy
+
+    - name: "Preflight: print platform + override context (makes runs auditable)"
+      # What this does:
+      # - Outputs the key decisions driving the run: platform + any per-host overrides.
+      #
+      # Why it’s needed:
+      # - When something installs or skips unexpectedly, this debug output is the first thing you check.
+      # - Keeps the system transparent and easy to reason about.
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          env_platform: "{{ env_platform }}"
+          overrides_present: "{{ (env_install_overrides is defined) | bool }}"
+          overrides: "{{ env_install_overrides | default({}) }}"
+
+  # ============================
+  # PLATFORM SPECIFIC INSTALLERS
+  # ============================
+  tasks:
+    - name: "Dispatch: run the macOS installer pipeline only when env_platform=macos"
+      # What this does:
+      # - Calls the macOS-specific setup file.
+      #
+      # Why it’s needed:
+      # - Keeps setup.yml clean and platform-agnostic.
+      # - Ensures macOS logic stays isolated and simple.
+      ansible.builtin.import_tasks: _setup_macos.yml
+      when: env_platform == "macos"
+
+    - name: "Dispatch: run the Omarchy installer pipeline only when env_platform=omarchy"
+      # What this does:
+      # - Calls the Omarchy-specific setup file.
+      #
+      # Why it’s needed:
+      # - Prevents any Arch/Pacman/Yay assumptions from leaking into other platforms.
+      # - Keeps Omarchy logic isolated and easy to harden.
+      ansible.builtin.import_tasks: _setup_omarchy.yml
+      when: env_platform == "omarchy"

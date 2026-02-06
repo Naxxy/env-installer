@@ -1,0 +1,51 @@
+---
+# macOS installer pipeline
+# =======================
+# What this file is:
+# - The macOS-only implementation layer.
+#
+# Why it exists:
+# - Keeps macOS details out of setup.yml.
+# - Makes it obvious what commands run on macOS and why.
+
+- name: "macOS preflight: verify Homebrew exists (fail fast)"
+  # What this does:
+  # - Runs `brew --version` to confirm the Homebrew command is available.
+  #
+  # Why it’s needed:
+  # - All macOS installs in this baseline use Homebrew.
+  # - Failing early is clearer than dozens of later “command not found” failures.
+  ansible.builtin.command: brew --version
+  register: brew_check
+  changed_when: false
+  failed_when: false
+
+- name: "macOS preflight: stop if brew is missing (no implicit bootstrap)"
+  # What this does:
+  # - Hard-fails if Homebrew is missing.
+  #
+  # Why it’s needed:
+  # - You want predictable, explicit behavior.
+  # - Bootstrapping brew automatically is often a policy decision (and can be interactive),
+  #   so we keep it manual unless you deliberately add a bootstrap step later.
+  ansible.builtin.fail:
+    msg: >-
+      Homebrew ('brew') is required but not installed.
+      Install it first, then re-run.
+  when: brew_check.rc != 0
+
+- name: "macOS: iterate install catalog and handle each item (install/skip/fail)"
+  # What this does:
+  # - Loops through installs: { brave, yt_dlp, mpv, ... }.
+  # - Delegates one item at a time to _setup_macos_item.yml.
+  #
+  # Why it’s needed:
+  # - Centralizes “looping” here so the item handler stays focused.
+  # - Keeps the catalog-driven approach simple: add an item to installs, and it gets processed.
+  ansible.builtin.include_tasks: _setup_macos_item.yml
+  loop: "{{ installs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    install_key: "{{ item.key }}"
+    install_def: "{{ item.value }}"

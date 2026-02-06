@@ -11,13 +11,13 @@
 
 - name: Determine whether Omarchy snapshot preflight should run
   ansible.builtin.set_fact:
-    env_is_omarchy_host: "{{ (env_flavor | default('')) == 'omarchy' }}"
+    env_is_omarchy_host: "{{ (env_platform | default('')) == 'omarchy' }}"
     env_should_snapshot_omarchy: "{{ (env_omarchy_snapshot_before_install | default(true)) | bool }}"
 
 - name: Debug Omarchy snapshot preflight intent
   ansible.builtin.debug:
     msg:
-      env_flavor: "{{ env_flavor | default('UNSET') }}"
+      env_platform: "{{ env_platform | default('UNSET') }}"
       env_is_omarchy_host: "{{ env_is_omarchy_host }}"
       snapshot_before_install: "{{ env_should_snapshot_omarchy }}"
       snapshot_required: "{{ (env_omarchy_snapshot_required | default(true)) | bool }}"

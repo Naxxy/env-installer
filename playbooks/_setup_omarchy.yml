@@ -1,0 +1,57 @@
+---
+# Omarchy installer pipeline
+# ==========================
+# What this file is:
+# - Omarchy-only implementation layer.
+#
+# Why it exists:
+# - Omarchy is an Arch derivative with strong warnings against “direct pacman/yay updates”.
+# - We keep Omarchy logic isolated so we can harden it without touching macOS behavior.
+#
+# IMPORTANT SAFETY BEHAVIOR:
+# - We do NOT run pacman -Syu here.
+# - We do NOT perform "system upgrades" in this baseline.
+# - We only install requested packages (pacman -S --needed) to minimize risk.
+
+- name: "Omarchy preflight: verify pacman exists (fail fast)"
+  # What this does:
+  # - Runs `pacman --version` to confirm pacman exists.
+  #
+  # Why it’s needed:
+  # - Omarchy installs depend on pacman for repo packages.
+  # - If pacman is missing, the environment is not what we expect; fail immediately.
+  ansible.builtin.command: pacman --version
+  register: pacman_check
+  changed_when: false
+  failed_when: pacman_check.rc != 0
+
+- name: "Omarchy preflight: check whether yay exists (only required for AUR items)"
+  # What this does:
+  # - Runs `yay --version` to see if AUR installs are possible.
+  #
+  # Why it’s needed:
+  # - Some items (e.g. brave-bin) are commonly AUR-based.
+  # - We want to fail with a clear message only when an item actually needs yay.
+  ansible.builtin.command: yay --version
+  register: yay_check
+  changed_when: false
+  failed_when: false
+
+- name: Omarchy preflight: create system snapshot before installs
+  ansible.builtin.import_tasks: _preflight_omarchy_snapshot.yml
+
+- name: "Omarchy: iterate install catalog and handle each item (install/skip/fail)"
+  # What this does:
+  # - Loops through installs: { brave, yt_dlp, mpv, ... }.
+  # - Delegates one item at a time to _setup_omarchy_item.yml.
+  #
+  # Why it’s needed:
+  # - Centralizes iteration while keeping the item handler readable.
+  # - Ensures every item in the catalog is processed deterministically.
+  ansible.builtin.include_tasks: _setup_omarchy_item.yml
+  loop: "{{ installs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    install_key: "{{ item.key }}"
+    install_def: "{{ item.value }}"

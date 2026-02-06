@@ -1,0 +1,133 @@
+---
+# Omarchy item handler
+# ====================
+# What this file is:
+# - Processes ONE install item for Omarchy (e.g. brave).
+#
+# Why it exists:
+# - Omarchy has stricter operational expectations than generic Arch:
+#   - avoid blind upgrades
+#   - keep installs explicit
+#   - fail clearly when an AUR helper is required
+
+- name: "Omarchy decision: compute effective skip for this item (host > platform > item > default)"
+  # What this does:
+  # - Determines whether this item should be skipped on THIS host.
+  #
+  # Why it’s needed:
+  # - Lets you enforce “baseline defaults” but override at host or platform level.
+  # - Keeps behavior deterministic and easy to audit.
+  ansible.builtin.set_fact:
+    effective_skip: >-
+      {{
+        (
+          (env_install_overrides[install_key].skip)
+          if (env_install_overrides is mapping
+              and (install_key in env_install_overrides)
+              and (env_install_overrides[install_key] is mapping)
+              and ('skip' in env_install_overrides[install_key]))
+          else
+            (
+              (install_def.omarchy.skip)
+              if (install_def is mapping and 'omarchy' in install_def and install_def.omarchy is mapping and 'skip' in install_def.omarchy)
+              else
+                (
+                  (install_def.skip)
+                  if (install_def is mapping and 'skip' in install_def)
+                  else
+                    false
+                )
+            )
+        )
+      }}
+
+- name: "Omarchy decision: debug the resolved plan for this item (for audit + troubleshooting)"
+  # What this does:
+  # - Prints:
+  #   - effective_skip
+  #   - omarchy sub-definition for the item (pacman/yay fields)
+  #   - whether yay is available
+  #   - any host override entry
+  #
+  # Why it’s needed:
+  # - When you ask “why did this run yay?” or “why did it skip?” this output answers it.
+  ansible.builtin.debug:
+    msg:
+      item: "{{ install_key }}"
+      effective_skip: "{{ effective_skip }}"
+      omarchy_def: "{{ (install_def.omarchy | default({})) if (install_def is mapping) else {} }}"
+      override: "{{ (env_install_overrides[install_key] | default({})) if (env_install_overrides is mapping) else {} }}"
+      yay_available: "{{ (yay_check.rc | default(1)) == 0 }}"
+
+- name: "Omarchy: skip this item when effective_skip=true"
+  # What this does:
+  # - Cleanly skips this item (without failing).
+  #
+  # Why it’s needed:
+  # - Skipping is a supported control path (e.g. host opt-out).
+  ansible.builtin.debug:
+    msg: "Skipping {{ install_key }} on Omarchy"
+  when: effective_skip | bool
+
+- name: "Omarchy: install pacman package when defined (pacman -S --needed <name>)"
+  # What this does:
+  # - If installs.<item>.omarchy.pacman exists, installs via pacman:
+  #     pacman -S --noconfirm --needed <package>
+  #
+  # Why it’s needed:
+  # - Repo packages should be installed via pacman (not yay).
+  # - We include --needed to avoid reinstalling already-installed packages.
+  # - We intentionally avoid full upgrades (no pacman -Syu).
+  become: true
+  ansible.builtin.command: >-
+    pacman -S --noconfirm --needed {{ install_def.omarchy.pacman | quote }}
+  register: pacman_install
+  changed_when: true
+  when:
+    - not (effective_skip | bool)
+    - install_def is mapping
+    - 'omarchy' in install_def
+    - install_def.omarchy is mapping
+    - 'pacman' in install_def.omarchy
+
+- name: "Omarchy: fail if yay install is requested but yay is missing (unless you choose to skip)"
+  # What this does:
+  # - If installs.<item>.omarchy.yay exists but yay isn't installed, hard-fail.
+  #
+  # Why it’s needed:
+  # - AUR installs require an AUR helper. If it's missing, continuing would silently
+  #   skip part of your baseline and give a false sense of success.
+  # - If you want to tolerate this, set skip=true for that item/platform/host.
+  ansible.builtin.fail:
+    msg: >-
+      '{{ install_key }}' requests an AUR/yay install ({{ install_def.omarchy.yay }}),
+      but 'yay' is not available.
+      Either install yay, or set skip=true for this item (platform-level or host override).
+  when:
+    - not (effective_skip | bool)
+    - install_def is mapping
+    - 'omarchy' in install_def
+    - install_def.omarchy is mapping
+    - 'yay' in install_def.omarchy
+    - (yay_check.rc | default(1)) != 0
+
+- name: "Omarchy: install yay package when defined (yay -S --needed <name>)"
+  # What this does:
+  # - If installs.<item>.omarchy.yay exists, installs via yay:
+  #     yay -S --noconfirm --needed <package>
+  #
+  # Why it’s needed:
+  # - AUR packages (e.g. brave-bin) are frequently needed.
+  # - --needed avoids reinstalling.
+  # - We still avoid full upgrades here; this is a targeted install only.
+  ansible.builtin.command: >-
+    yay -S --noconfirm --needed {{ install_def.omarchy.yay | quote }}
+  register: yay_install
+  changed_when: true
+  when:
+    - not (effective_skip | bool)
+    - install_def is mapping
+    - 'omarchy' in install_def
+    - install_def.omarchy is mapping
+    - 'yay' in install_def.omarchy
+    - (yay_check.rc | default(1)) == 0

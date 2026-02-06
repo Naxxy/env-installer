@@ -1,0 +1,106 @@
+---
+# macOS item handler
+# ==================
+# What this file is:
+# - Processes ONE install item for macOS (e.g. brave).
+#
+# Why it exists:
+# - Keeps logic readable and auditable per item:
+#   - compute skip
+#   - debug decision
+#   - install brew/cask if present
+
+- name: "macOS decision: compute effective skip for this item (host > platform > item > default)"
+  # What this does:
+  # - Determines whether this item should be skipped on THIS host.
+  #
+  # Why it’s needed:
+  # - “Skip” is a core control mechanism:
+  #   - You can disable globally, per platform, or per host.
+  # - This keeps behavior deterministic and debuggable.
+  ansible.builtin.set_fact:
+    effective_skip: >-
+      {{
+        (
+          (env_install_overrides[install_key].skip)
+          if (env_install_overrides is mapping
+              and (install_key in env_install_overrides)
+              and (env_install_overrides[install_key] is mapping)
+              and ('skip' in env_install_overrides[install_key]))
+          else
+            (
+              (install_def.macos.skip)
+              if (install_def is mapping and 'macos' in install_def and install_def.macos is mapping and 'skip' in install_def.macos)
+              else
+                (
+                  (install_def.skip)
+                  if (install_def is mapping and 'skip' in install_def)
+                  else
+                    false
+                )
+            )
+        )
+      }}
+
+- name: "macOS decision: debug the resolved plan for this item (for audit + troubleshooting)"
+  # What this does:
+  # - Prints:
+  #   - effective_skip
+  #   - the macos sub-definition for the item
+  #   - any host override entry
+  #
+  # Why it’s needed:
+  # - When you ask “why didn’t this install?” the answer is in this output.
+  # - This is intentionally verbose because this repo optimizes for transparency.
+  ansible.builtin.debug:
+    msg:
+      item: "{{ install_key }}"
+      effective_skip: "{{ effective_skip }}"
+      macos_def: "{{ (install_def.macos | default({})) if (install_def is mapping) else {} }}"
+      override: "{{ (env_install_overrides[install_key] | default({})) if (env_install_overrides is mapping) else {} }}"
+
+- name: "macOS: skip this item when effective_skip=true"
+  # What this does:
+  # - Cleanly skips this item (without failing).
+  #
+  # Why it’s needed:
+  # - Skipping is a supported “normal” control path.
+  ansible.builtin.debug:
+    msg: "Skipping {{ install_key }} on macOS"
+  when: effective_skip | bool
+
+- name: "macOS: install brew formula when defined (brew install <name>)"
+  # What this does:
+  # - If installs.<item>.macos.brew exists, runs: brew install <brew-name>
+  #
+  # Why it’s needed:
+  # - Most CLI tools are brew formulae.
+  # - Keeps item definition declarative; this is the execution step.
+  ansible.builtin.command: >-
+    brew install {{ install_def.macos.brew | quote }}
+  register: brew_install
+  changed_when: true
+  when:
+    - not (effective_skip | bool)
+    - install_def is mapping
+    - 'macos' in install_def
+    - install_def.macos is mapping
+    - 'brew' in install_def.macos
+
+- name: "macOS: install brew cask when defined (brew install --cask <name>)"
+  # What this does:
+  # - If installs.<item>.macos.cask exists, runs: brew install --cask <cask-name>
+  #
+  # Why it’s needed:
+  # - GUI apps typically install via casks.
+  # - Keeps GUI vs CLI distinction explicit in the catalog.
+  ansible.builtin.command: >-
+    brew install --cask {{ install_def.macos.cask | quote }}
+  register: cask_install
+  changed_when: true
+  when:
+    - not (effective_skip | bool)
+    - install_def is mapping
+    - 'macos' in install_def
+    - install_def.macos is mapping
+    - 'cask' in install_def.macos
