@@ -8,6 +8,7 @@ Design goals:
 - **Fail fast**: unknown profiles and unsupported feature/platform combos stop early with clear errors.
 - **Minimal “magic”**: loops are used only where they reduce copy/paste drift and are heavily commented.
 - **Easy to extend**: adding a new install item is a small, repeatable set of edits.
+- **Safe by default**: destructive or system‑level changes are guarded by preflight checks.
 
 ---
 
@@ -27,6 +28,7 @@ playbooks/
   main.yml
   _derive_features.yml
   _assert_supported.yml
+  _preflight_omarchy_snapshot.yml
   _install_features.yml
   features/
     install_brave.yml
@@ -64,23 +66,22 @@ roles/
 Each host sets:
 
 - `env_pkg_family`: `arch | debian | macos`
-- `env_flavor`: a more specific “flavor” string (e.g. `arch`, `omarchy`, `ubuntu`, `macos`)
+- `env_flavor`: a more specific flavor (`arch`, `omarchy`, `ubuntu`, `macos`, etc.)
 - `env_profiles`: list of profile names
 
-Example (`inventory/host_vars/thinkpad-x240.yml`):
+Example:
 
 ```yaml
 env_pkg_family: arch
-env_flavor: arch
+env_flavor: omarchy
 
 env_profiles:
   - base
-  - vpn
   - media
   - dev_cli
 ```
 
-Profiles are defined centrally in `inventory/group_vars/all.yml` as `env_profiles_catalog`.
+Profiles are defined centrally in `inventory/group_vars/all.yml`.
 
 ---
 
@@ -88,14 +89,12 @@ Profiles are defined centrally in `inventory/group_vars/all.yml` as `env_profile
 
 `playbooks/_derive_features.yml`:
 
-- Validates all profile names are known (fails fast on typos).
-- Expands profiles → `env_features_from_profiles`.
-- Derives **every** feature in `env_known_features` into:
-  - `install_<feature>` (boolean)
-  - `install_<feature>_reason` (`profile`, `override:true|false`, or `default:false`)
-- Prints a plan summary including `env_features_from_profiles`.
+- Validates profile names (fail‑fast on typos)
+- Expands profiles → features
+- Produces `install_*` booleans
+- Records reasons (`profile`, `override`, `default:false`)
 
-This is the **planning layer**: it decides *what* will be installed, not *how*.
+This is the **planning layer**.
 
 ---
 
@@ -103,32 +102,56 @@ This is the **planning layer**: it decides *what* will be installed, not *how*.
 
 `playbooks/_assert_supported.yml`:
 
-- Ensures `env_pkg_family` and `env_flavor` are set in host_vars.
-- For each enabled feature, checks `env_feature_support` allows it for this platform/flavor.
+- Ensures pkg family & flavor are defined
+- Ensures enabled features are supported
 
 ---
 
-### 4) Install enabled features (explicit includes)
+### 4) Omarchy snapshot preflight (safety layer)
 
-`playbooks/_install_features.yml` is intentionally explicit (no hidden loops).  
-Each feature file lives at `playbooks/features/install_<feature>.yml`.
+`playbooks/_preflight_omarchy_snapshot.yml`:
 
-Feature implementations typically use:
+If `env_flavor == "omarchy"`:
 
-- `roles/install_packages` for simple package installs, or
-- a dedicated role for complex workflows (services, config, multiple steps), e.g. `roles/netbird`.
+- Verifies `omarchy-snapshot` tooling exists
+- Creates a **bootable system snapshot** before installs
+- Fails fast if snapshot tooling is required but unavailable
+- Is safe in `--check` mode
+
+Command used:
+
+```bash
+sudo omarchy-snapshot create
+```
+
+This ensures the system can be rolled back from the Limine boot menu if an install causes instability.
+
+Snapshot behavior is controlled via:
+
+```yaml
+env_omarchy_snapshot_before_install: true
+env_omarchy_snapshot_required: true
+```
+
+---
+
+### 5) Install enabled features
+
+`playbooks/_install_features.yml` explicitly includes feature installers.
+
+No hidden loops — full transparency.
 
 ---
 
 ## Quick start
 
-### Run (all hosts in inventory)
+Run all hosts:
 
 ```bash
 ansible-playbook playbooks/main.yml
 ```
 
-### Run a single host
+Run one host:
 
 ```bash
 ansible-playbook playbooks/main.yml -l thinkpad-x240
@@ -140,88 +163,55 @@ ansible-playbook playbooks/main.yml -l thinkpad-x240
 
 Defined in `inventory/group_vars/all.yml`.
 
-### Profiles (`env_profiles_catalog`)
+### Profiles
 
-- `base` → `install_brave`
-- `media` → `install_mpv`
-- `vpn` → `install_netbird`
-- `dev_cli` → `install_jq`, `install_yt_dlp`, `install_magic_wormhole`, `install_lazyvim`
+- `base` → brave
+- `media` → mpv
+- `vpn` → netbird
+- `dev_cli` → jq, yt-dlp, wormhole, lazyvim
 
-### Known features (`env_known_features`)
+### Known features
 
-- `install_mpv`
-- `install_brave`
-- `install_netbird`
-- `install_jq`
-- `install_yt_dlp`
-- `install_magic_wormhole`
-- `install_lazyvim`
-
----
-
-## Adding a new installation item
-
-See: `env-installer-add-feature-guide.md`
-
-High level:
-
-1. Add `install_<new>` to `env_known_features` (and optionally a profile).
-2. Add `env_feature_support` entries for your platforms/flavors.
-3. Add package name mappings in `env_package_names` if required.
-4. Create `playbooks/features/install_<new>.yml` (or a role for complex installs).
-5. Add an explicit include in `playbooks/_install_features.yml`:
-
-```yaml
-- name: Install <new> feature
-  ansible.builtin.import_tasks: "features/install_<new>.yml"
-  when: install_<new> | bool
-```
+- install_mpv
+- install_brave
+- install_netbird
+- install_jq
+- install_yt_dlp
+- install_magic_wormhole
+- install_lazyvim
 
 ---
 
 ## Notes on package installation
 
-### `roles/install_packages` (v0)
+### install_packages role
 
 Input:
 
 ```yaml
 install_packages_list:
-  - name: "jq"
+  - name: jq
     state: present
-  - name: "brave-browser"
-    state: present
-    cask: true   # macOS only
 ```
 
 Behavior:
 
-- **Arch**: repo via `pacman`; AUR heuristic `*-bin` via `yay`; pre-check with `pacman -Q`.
-- **Debian**: `apt` (idempotent).
-- **macOS**: `brew` formulae + casks; installs only missing items.
+- Arch → pacman / yay
+- Debian → apt
+- macOS → brew
 
 ---
 
-## Troubleshooting
+## Safety guarantees
 
-### “Unknown profile(s) found in env_profiles…”
+On Omarchy systems:
 
-A profile name in `inventory/host_vars/<host>.yml` doesn’t exist in `env_profiles_catalog`. Fix the typo or add the profile.
-
-### “Feature 'install_x' is enabled but unsupported…”
-
-Update `env_feature_support` to allow that feature for your `env_pkg_family` / `env_flavor`.
-
-### Homebrew missing on macOS
-
-The macOS installer fails fast if `brew` is missing.
-
-### Arch AUR installs fail because `yay` is missing
-
-If you request a package ending in `-bin`, the arch installer routes it through `yay`. Install `yay` first or change the package name.
+- A bootable snapshot is taken before installs
+- Failure to snapshot blocks execution (by default)
+- Prevents unrecoverable system breakage
 
 ---
 
 ## License
 
-Internal / personal tooling (add a license if you plan to publish).
+Internal / personal tooling.

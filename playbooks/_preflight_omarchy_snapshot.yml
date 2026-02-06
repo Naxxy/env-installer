@@ -1,0 +1,81 @@
+# playbooks/_preflight_omarchy_snapshot.yml
+#
+# PURPOSE
+# -------
+# Omarchy safety step: create a bootable system snapshot before running installs.
+#
+# Reference (Omarchy Manual):
+# - Create snapshot: omarchy-snapshot create
+# - Restore: boot via Limine, or use omarchy-snapshot restore
+# - Note: only available on installations using the Limine boot loader (Omarchy 2.0+ default)
+
+- name: Determine whether Omarchy snapshot preflight should run
+  ansible.builtin.set_fact:
+    env_is_omarchy_host: "{{ (env_flavor | default('')) == 'omarchy' }}"
+    env_should_snapshot_omarchy: "{{ (env_omarchy_snapshot_before_install | default(true)) | bool }}"
+
+- name: Debug Omarchy snapshot preflight intent
+  ansible.builtin.debug:
+    msg:
+      env_flavor: "{{ env_flavor | default('UNSET') }}"
+      env_is_omarchy_host: "{{ env_is_omarchy_host }}"
+      snapshot_before_install: "{{ env_should_snapshot_omarchy }}"
+      snapshot_required: "{{ (env_omarchy_snapshot_required | default(true)) | bool }}"
+      check_mode: "{{ ansible_check_mode | bool }}"
+  when: env_is_omarchy_host | bool
+
+- name: Check if omarchy-snapshot command exists (Omarchy only)
+  ansible.builtin.command: omarchy-snapshot --help
+  register: omarchy_snapshot_help
+  changed_when: false
+  failed_when: false
+  when:
+    - env_is_omarchy_host | bool
+    - env_should_snapshot_omarchy | bool
+
+- name: Fail fast if snapshot is required but omarchy-snapshot is unavailable
+  ansible.builtin.fail:
+    msg: >-
+      Omarchy snapshot preflight is enabled, but 'omarchy-snapshot' is not available on this host.
+      Omarchy snapshots are only available on installations using the Limine boot loader (Omarchy 2.0+ default).
+      Fix the Omarchy snapshot tooling/bootloader, or disable this check with:
+        env_omarchy_snapshot_before_install: false
+      (or set env_omarchy_snapshot_required: false to warn/skip instead of failing).
+  when:
+    - env_is_omarchy_host | bool
+    - env_should_snapshot_omarchy | bool
+    - (env_omarchy_snapshot_required | default(true)) | bool
+    - (omarchy_snapshot_help.rc | default(1)) != 0
+
+- name: Warn + skip if omarchy-snapshot is unavailable (non-required mode)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: Omarchy snapshot preflight requested, but 'omarchy-snapshot' is unavailable.
+      Skipping snapshot because env_omarchy_snapshot_required=false.
+  when:
+    - env_is_omarchy_host | bool
+    - env_should_snapshot_omarchy | bool
+    - not ((env_omarchy_snapshot_required | default(true)) | bool)
+    - (omarchy_snapshot_help.rc | default(1)) != 0
+
+- name: Omarchy snapshot (dry-run note)
+  ansible.builtin.debug:
+    msg:
+      note: "CHECK MODE: would run: sudo omarchy-snapshot create"
+  when:
+    - env_is_omarchy_host | bool
+    - env_should_snapshot_omarchy | bool
+    - (omarchy_snapshot_help.rc | default(1)) == 0
+    - ansible_check_mode | bool
+
+- name: Create Omarchy system snapshot before installs
+  become: true
+  ansible.builtin.command: omarchy-snapshot create
+  register: omarchy_snapshot_create
+  changed_when: true
+  failed_when: omarchy_snapshot_create.rc != 0
+  when:
+    - env_is_omarchy_host | bool
+    - env_should_snapshot_omarchy | bool
+    - (omarchy_snapshot_help.rc | default(1)) == 0
+    - not (ansible_check_mode | bool)

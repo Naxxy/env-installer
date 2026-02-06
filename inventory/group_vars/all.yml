@@ -114,3 +114,18 @@ env_package_names:
       - "git"
       - "ripgrep"
       - "fd"
+
+# -----------------------------
+# Omarchy safety / snapshot preflight
+# -----------------------------
+# Omarchy provides bootable system snapshots via:
+#   omarchy-snapshot create
+# This is only available on installs using the Limine bootloader (Omarchy 2.0+ default).
+#
+# We treat "take a snapshot before installs" as a default safety requirement for Omarchy hosts.
+# You may disable per-host via host_vars or extra-vars if you deliberately want to skip it.
+env_omarchy_snapshot_before_install: true
+
+# If true, fail fast if we detect an Omarchy host but cannot run omarchy-snapshot.
+# (Example causes: missing omarchy-snapshot command, non-Limine bootloader, etc.)
+env_omarchy_snapshot_required: true

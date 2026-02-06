@@ -11,5 +11,8 @@
       ansible.builtin.import_tasks: _assert_supported.yml
 
   tasks:
+    - name: Omarchy preflight: create system snapshot before installs
+      ansible.builtin.import_tasks: _preflight_omarchy_snapshot.yml
+
     - name: Install enabled features
       ansible.builtin.import_tasks: _install_features.yml
