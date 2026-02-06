@@ -1,0 +1,23 @@
+# Prerequirements
+- Omarchy snapshot before running installs
+- Change arch installs to omarchy installs
+
+# Installer base steps
+- homebrew (Mac)
+- yay (Arch)
+- Pyenv
+
+# Other
+- docker
+- qutebrowser
+- zed
+- netbird
+- mullvad
+- qemu
+- mpv
+- yt-dlp
+
+# Omarchy
+- Uninstall web apps
+- Uninstall apps
+- Install themes
