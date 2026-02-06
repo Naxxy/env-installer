@@ -1,0 +1,117 @@
+# playbooks/features/install_brave.yml
+#
+# Brave on Debian-family requires adding Brave's official APT repo first.
+# Ref: https://brave.com/linux/
+
+- name: Debug brave feature intent
+  ansible.builtin.debug:
+    msg:
+      feature: install_brave
+      enabled: "{{ install_brave }}"
+      reason: "{{ install_brave_reason }}"
+      pkg_family: "{{ env_pkg_family }}"
+      flavor: "{{ env_flavor }}"
+      check_mode: "{{ ansible_check_mode | bool }}"
+
+# -----------------------------
+# Debian-family (Debian/Ubuntu/Kubuntu): add Brave APT repo
+# -----------------------------
+
+- name: "Brave (debian): dry-run note (repo setup + install)"
+  ansible.builtin.debug:
+    msg:
+      note: >-
+        CHECK MODE: would install Brave by adding Brave APT repo keyring + sources,
+        running apt update, then installing package '{{ env_package_names.brave.debian | default("brave-browser") }}'
+      keyring_path: "/usr/share/keyrings/brave-browser-archive-keyring.gpg"
+      sources_path: "/etc/apt/sources.list.d/brave-browser-release.sources"
+      keyring_url: "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
+      sources_url: "https://brave-browser-apt-release.s3.brave.com/brave-browser.sources"
+  when:
+    - env_pkg_family == "debian"
+    - ansible_check_mode | bool
+
+- name: "Brave (debian): ensure keyrings directory exists"
+  become: true
+  ansible.builtin.file:
+    path: /usr/share/keyrings
+    state: directory
+    mode: "0755"
+  when:
+    - env_pkg_family == "debian"
+    - not (ansible_check_mode | bool)
+
+- name: "Brave (debian): install Brave archive keyring"
+  become: true
+  ansible.builtin.get_url:
+    url: "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
+    dest: "/usr/share/keyrings/brave-browser-archive-keyring.gpg"
+    mode: "0644"
+  when:
+    - env_pkg_family == "debian"
+    - not (ansible_check_mode | bool)
+
+- name: "Brave (debian): install Brave APT sources file"
+  become: true
+  ansible.builtin.get_url:
+    url: "https://brave-browser-apt-release.s3.brave.com/brave-browser.sources"
+    dest: "/etc/apt/sources.list.d/brave-browser-release.sources"
+    mode: "0644"
+  when:
+    - env_pkg_family == "debian"
+    - not (ansible_check_mode | bool)
+
+- name: "Brave (debian): apt update (after repo setup)"
+  become: true
+  ansible.builtin.apt:
+    update_cache: true
+  when:
+    - env_pkg_family == "debian"
+    - not (ansible_check_mode | bool)
+
+- name: "Brave (debian): install brave-browser"
+  ansible.builtin.include_role:
+    name: install_packages
+  vars:
+    install_packages_list:
+      - name: "{{ env_package_names.brave.debian | default('brave-browser') }}"
+        state: present
+  when:
+    - env_pkg_family == "debian"
+    - not (ansible_check_mode | bool)
+
+# -----------------------------
+# Arch + macOS: keep existing package flow
+# -----------------------------
+
+- name: "Brave (arch/macos): choose package name"
+  ansible.builtin.set_fact:
+    brave_pkg_name: >-
+      {{
+        env_package_names.brave.arch
+        if env_pkg_family == 'arch'
+        else
+          env_package_names.brave.macos
+      }}
+    brave_is_cask: "{{ (env_pkg_family == 'macos') | bool }}"
+  when: env_pkg_family in ["arch", "macos"]
+
+- name: "Brave (arch/macos): dry-run note (install)"
+  ansible.builtin.debug:
+    msg:
+      note: "CHECK MODE: would install '{{ brave_pkg_name }}' (cask={{ brave_is_cask }})"
+  when:
+    - env_pkg_family in ["arch", "macos"]
+    - ansible_check_mode | bool
+
+- name: "Brave (arch/macos): install brave"
+  ansible.builtin.include_role:
+    name: install_packages
+  vars:
+    install_packages_list:
+      - name: "{{ brave_pkg_name }}"
+        state: present
+        cask: "{{ brave_is_cask }}"
+  when:
+    - env_pkg_family in ["arch", "macos"]
+    - not (ansible_check_mode | bool)

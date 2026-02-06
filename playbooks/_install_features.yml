@@ -1,0 +1,35 @@
+# playbooks/_install_features.yml
+# Explicit includes (no hidden loops),
+# so it's always clear which features exist and how they install.
+
+- name: Install CapsLock / Escape swap
+  ansible.builtin.import_tasks: "features/install_caps_escape_swap.yml"
+  when: install_caps_escape_swap | bool
+
+- name: Install mpv feature
+  ansible.builtin.import_tasks: "features/install_mpv.yml"
+  when: install_mpv | bool
+
+- name: Install brave feature
+  ansible.builtin.import_tasks: "features/install_brave.yml"
+  when: install_brave | bool
+
+- name: Install netbird feature
+  ansible.builtin.import_tasks: "features/install_netbird.yml"
+  when: install_netbird | bool
+
+- name: Install jq feature
+  ansible.builtin.import_tasks: "features/install_jq.yml"
+  when: install_jq | bool
+
+- name: Install yt-dlp feature
+  ansible.builtin.import_tasks: "features/install_yt_dlp.yml"
+  when: install_yt_dlp | bool
+
+- name: Install magic-wormhole feature
+  ansible.builtin.import_tasks: "features/install_magic_wormhole.yml"
+  when: install_magic_wormhole | bool
+
+- name: Install LazyVim feature
+  ansible.builtin.import_tasks: "features/install_lazyvim.yml"
+  when: install_lazyvim | bool

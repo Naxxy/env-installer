@@ -1,0 +1,74 @@
+# playbooks/_assert_supported.yml
+#
+# PURPOSE
+# -------
+# Fail fast if a feature is enabled on a host where it is not supported.
+#
+# WHY A LOOP IS USED HERE
+# -----------------------
+# We want ONE place that enforces the support matrix for *all* features, without
+# duplicating near-identical assertions for each feature flag.
+#
+# The loop iterates over env_known_features (e.g. "install_mpv", "install_brave", ...).
+# For each item, it checks:
+#   1) env_feature_support has an entry for this feature
+#   2) that entry has an entry for this env_pkg_family
+#   3) the current env_flavor is allowed OR "all" is allowed
+#
+# TRANSPARENCY / DEBUGGING
+# ------------------------
+# - If this fails, the error includes:
+#   - which feature is enabled
+#   - which pkg_family/flavor were detected for this host
+#   - the support list that was expected
+# - Note the enable check uses vars[item] so we can read the boolean variable whose
+#   name matches the feature string (e.g. vars["install_mpv"]).
+#
+# REQUIREMENTS
+# ------------
+# env_pkg_family and env_flavor MUST be explicitly set in host_vars.
+# That keeps “what machine am I?” in one obvious, auditable location.
+
+- name: Assert env_pkg_family is defined
+  ansible.builtin.assert:
+    that:
+      - env_pkg_family is defined
+      - env_pkg_family in ["arch", "debian", "macos"]
+    fail_msg: >-
+      env_pkg_family must be explicitly set to one of: arch, debian, macos.
+      (Set it in inventory/host_vars/<host>.yml)
+
+- name: Assert env_flavor is defined
+  ansible.builtin.assert:
+    that:
+      - env_flavor is defined
+      - env_flavor | length > 0
+    fail_msg: >-
+      env_flavor must be explicitly set (e.g. omarchy, arch, ubuntu, debian, kubuntu, macos).
+      (Set it in inventory/host_vars/<host>.yml)
+
+- name: Assert support for enabled features
+  ansible.builtin.assert:
+    that:
+      - env_feature_support is defined
+      - env_feature_support[item] is defined
+      - env_feature_support[item][env_pkg_family] is defined
+      - env_feature_support[item][env_pkg_family].flavors is defined
+      - >-
+        (
+          ('all' in env_feature_support[item][env_pkg_family].flavors)
+          or
+          (env_flavor in env_feature_support[item][env_pkg_family].flavors)
+        )
+    fail_msg: >-
+      Feature '{{ item }}' is enabled but unsupported for pkg_family='{{ env_pkg_family }}' flavor='{{ env_flavor }}'.
+      Support list is: {{
+        (env_feature_support[item][env_pkg_family].flavors
+          if (env_feature_support is defined
+              and env_feature_support[item] is defined
+              and env_feature_support[item][env_pkg_family] is defined)
+          else 'MISSING SUPPORT ENTRY'
+        )
+      }}
+  loop: "{{ env_known_features }}"
+  when: (vars[item] | default(false)) | bool

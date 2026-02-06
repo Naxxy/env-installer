@@ -1,0 +1,73 @@
+# roles/install_packages/tasks/macos.yml
+# macOS installer using Homebrew.
+# - Normal packages: brew install
+# - Casks: brew install --cask
+#
+# (Fail fast if brew is missing; you can add a brew bootstrap later.)
+
+- name: Check brew exists
+  ansible.builtin.command: brew --version
+  register: brew_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if Homebrew missing
+  ansible.builtin.fail:
+    msg: "Homebrew ('brew') is required but not installed. Install Homebrew first."
+  when: brew_check.rc != 0
+
+- name: Collect desired non-cask package names
+  ansible.builtin.set_fact:
+    brew_non_cask_names: >-
+      {{
+        (
+          install_packages_list
+          | rejectattr('cask', 'defined')
+          | map(attribute='name')
+          | list
+        )
+        +
+        (
+          install_packages_list
+          | selectattr('cask', 'defined')
+          | rejectattr('cask')
+          | map(attribute='name')
+          | list
+        )
+        | unique
+      }}
+    brew_cask_names: >-
+      {{
+        install_packages_list
+        | selectattr('cask', 'defined')
+        | selectattr('cask')
+        | map(attribute='name')
+        | list
+        | unique
+      }}
+
+- name: List installed brew formulae
+  ansible.builtin.command: brew list --formula
+  register: brew_formulae
+  changed_when: false
+
+- name: List installed brew casks
+  ansible.builtin.command: brew list --cask
+  register: brew_casks
+  changed_when: false
+  failed_when: false
+
+- name: Compute missing formulae and casks
+  ansible.builtin.set_fact:
+    brew_missing_formulae: "{{ brew_non_cask_names | difference(brew_formulae.stdout_lines | default([])) }}"
+    brew_missing_casks: "{{ brew_cask_names | difference(brew_casks.stdout_lines | default([])) }}"
+
+- name: Install missing non-cask packages
+  ansible.builtin.command: >
+    brew install {{ brew_missing_formulae | join(' ') }}
+  when: brew_missing_formulae | length > 0
+
+- name: Install missing cask packages
+  ansible.builtin.command: >
+    brew install --cask {{ brew_missing_casks | join(' ') }}
+  when: brew_missing_casks | length > 0

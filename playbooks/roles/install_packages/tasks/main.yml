@@ -1,0 +1,31 @@
+# A small abstraction role:
+# - Takes install_packages_list: [{name, state, cask?}]
+# - Dispatches to a pkg_family-specific installer
+#
+# Keep v0 intentionally minimal:
+# - We only support installing packages (present).
+# - If someone requests absent/remove, fail fast so it’s obvious.
+
+- name: Assert install_packages_list provided
+  ansible.builtin.assert:
+    that:
+      - install_packages_list is defined
+      - install_packages_list | length > 0
+    fail_msg: "install_packages_list must be provided to role install_packages."
+
+- name: Assert only 'present' state is supported in v0
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          (item.state is not defined)
+          or
+          (item.state == 'present')
+        )
+    fail_msg: >-
+      install_packages (v0) only supports state=present.
+      Got state='{{ item.state | default("UNSET") }}' for package '{{ item.name | default("UNNAMED") }}'.
+  loop: "{{ install_packages_list }}"
+
+- name: Dispatch to platform installer
+  ansible.builtin.include_tasks: "{{ env_pkg_family }}.yml"

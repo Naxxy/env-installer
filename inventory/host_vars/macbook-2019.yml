@@ -1,0 +1,7 @@
+env_pkg_family: macos
+env_flavor: macos
+
+env_profiles:
+  - base
+  - media
+  - dev_cli

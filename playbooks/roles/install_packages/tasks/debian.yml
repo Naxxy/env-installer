@@ -1,0 +1,17 @@
+# Debian-family installer (Debian/Ubuntu/Kubuntu etc.)
+
+- name: Ensure apt-get is available
+  ansible.builtin.command: apt-get --version
+  changed_when: false
+
+- name: Update apt cache
+  become: true
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install packages via apt
+  become: true
+  ansible.builtin.apt:
+    name: "{{ install_packages_list | map(attribute='name') | list }}"
+    state: present

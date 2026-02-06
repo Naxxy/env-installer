@@ -1,0 +1,14 @@
+- name: Assert netbird inputs
+  ansible.builtin.import_tasks: assert.yml
+
+- name: Install netbird (platform)
+  ansible.builtin.include_tasks: "{{ env_pkg_family }}.yml"
+
+# Configure:
+# - Linux: service + up automation
+# - macOS: if CLI variant, also allow automation via setup key
+- name: Configure netbird (Linux + macOS CLI)
+  ansible.builtin.import_tasks: configure.yml
+  when: >
+    (env_pkg_family in ["arch", "debian"]) or
+    (env_pkg_family == "macos" and (netbird_macos_variant | default("cli")) == "cli")
