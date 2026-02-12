@@ -1,0 +1,26 @@
+---
+# --------------------------------------------------------------------------------
+#                         BASELINE LISTS — macOS
+# --------------------------------------------------------------------------------
+# These are the default “baseline” installs for macOS.
+# Host-specific adds/skips are applied in playbooks/setup.yml.
+
+macos_brew:
+  - yt-dlp
+  - mpv
+  - tmux
+  - neovim
+  - qutebrowser
+  - netbirdio/tap/netbird
+
+macos_cask:
+  - brave-browser
+
+macos_script: []
+# Example:
+# macos_script:
+#   - name: zed
+#     prereq_check: "command -v curl >/dev/null"
+#     idempotent_check: "command -v zed >/dev/null"
+#     cmd: "curl -fsSL https://zed.dev/install.sh | sh"
+#     become: false

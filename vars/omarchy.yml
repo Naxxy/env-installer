@@ -1,0 +1,27 @@
+---
+# --------------------------------------------------------------------------------
+#                         BASELINE LISTS — OMARCHY
+# --------------------------------------------------------------------------------
+# These are the default “baseline” installs for Omarchy.
+# Host-specific adds/skips are applied in playbooks/setup.yml.
+
+omarchy_pacman:
+  - yt-dlp
+  - mpv
+  - tmux
+  - neovim
+  - qutebrowser
+  - netbird
+  - curl
+
+omarchy_yay:
+  - brave-bin
+
+omarchy_script: []
+# Example:
+# omarchy_script:
+#   - name: zed
+#     prereq_check: "command -v curl >/dev/null"
+#     idempotent_check: "command -v zed >/dev/null"
+#     cmd: "curl -fsSL https://zed.dev/install.sh | sh"
+#     become: false

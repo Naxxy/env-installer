@@ -3,63 +3,18 @@
   hosts: all
   gather_facts: false
 
-  vars:
-    # --------------------------------------------------------------------------------
-    #                             BASELINE INSTALL LISTS
-    # --------------------------------------------------------------------------------
-    # Keep it boring and explicit.
-    # Scripts are run LAST (after packages/casks).
-    #
-    # Script item shape:
-    #   - name: stable identifier for host-level skipping
-    #   - cmd: the install command(s)
-    #   - become: whether to sudo for the script step
-    #   - idempotent_check: command that returns 0 when "already installed"
-    #   - prereq_check: OPTIONAL command that returns 0 when prerequisites are present
-    #                  (example: "command -v curl >/dev/null")
+  # --------------------------------------------------------------------------------
+  #                         BASELINE LISTS (VARS FILES)
+  # --------------------------------------------------------------------------------
+  # The baseline defaults live in:
+  # - vars/macos.yml
+  # - vars/omarchy.yml
+  #
+  # Host-level overrides live in inventory/host_vars/*.yml.
 
-    # macOS baseline
-    macos_brew:
-      - yt-dlp
-      - mpv
-      - tmux
-      - neovim
-      - qutebrowser
-      - netbirdio/tap/netbird
-
-    macos_cask:
-      - brave-browser
-
-    macos_script: []
-    # Example:
-    # macos_script:
-    #   - name: zed
-    #     prereq_check: "command -v curl >/dev/null"
-    #     idempotent_check: "command -v zed >/dev/null"
-    #     cmd: "curl -fsSL https://zed.dev/install.sh | sh"
-    #     become: false
-
-    # Omarchy baseline
-    omarchy_pacman:
-      - yt-dlp
-      - mpv
-      - tmux
-      - neovim
-      - qutebrowser
-      - netbird
-      - curl
-
-    omarchy_yay:
-      - brave-bin
-
-    omarchy_script: []
-    # Example:
-    # omarchy_script:
-    #   - name: netbird_official
-    #     prereq_check: "command -v curl >/dev/null"
-    #     idempotent_check: "command -v netbird >/dev/null"
-    #     cmd: "curl -fsSL https://pkgs.netbird.io/install.sh | sh"
-    #     become: true
+  vars_files:
+    - ../vars/macos.yml
+    - ../vars/omarchy.yml
 
   pre_tasks:
     - name: "Preflight: assert env_platform is set"
@@ -69,18 +24,14 @@
           - env_platform in ["macos", "omarchy"]
         fail_msg: "env_platform must be set per host to macos or omarchy."
 
-    - name: "Preflight: print host context (for debugging)"
-      ansible.builtin.debug:
-        msg:
-          host: "{{ inventory_hostname }}"
-          env_platform: "{{ env_platform }}"
-
   tasks:
     # =================================================================================
     #                                      macOS
     # =================================================================================
-    - name: "macOS pipeline"
+    - name: "macOS: baseline installer"
+      when: env_platform == "macos"
       block:
+
         # ---------------------------------------------------------------------------------
         #                     PLAN: BUILD EFFECTIVE LISTS (BASELINE + ADD - SKIP)
         # ---------------------------------------------------------------------------------
@@ -98,17 +49,10 @@
                 | union(env_macos_cask_add | default([]))
                 | difference(env_macos_cask_skip | default([]))
               }}
-            macos_script_effective: >-
+            platform_script_effective: >-
               {{
                 (macos_script | default([]))
                 + (env_macos_script_add | default([]))
-              }}
-
-        - name: "macOS plan: apply host script skips by name"
-          ansible.builtin.set_fact:
-            macos_script_effective: >-
-              {{
-                macos_script_effective
                 | rejectattr('name', 'in', (env_macos_script_skip | default([])))
                 | list
               }}
@@ -118,29 +62,49 @@
             msg:
               brew: "{{ macos_brew_effective }}"
               cask: "{{ macos_cask_effective }}"
-              script_names: "{{ macos_script_effective | map(attribute='name') | list }}"
+              script_names: "{{ platform_script_effective | map(attribute='name') | list }}"
               total: >-
                 {{
                   (macos_brew_effective | length)
                   + (macos_cask_effective | length)
-                  + (macos_script_effective | length)
+                  + (platform_script_effective | length)
                 }}
 
-        - name: "macOS early-exit: end host when nothing planned"
+        - name: "macOS plan: compute whether any installs are planned"
+          ansible.builtin.set_fact:
+            platform_has_work: >-
+              {{
+                (macos_brew_effective | length)
+                + (macos_cask_effective | length)
+                + (platform_script_effective | length)
+                > 0
+              }}
+
+        # ---------------------------------------------------------------------------------
+        #                              EARLY EXIT (macOS)
+        # ---------------------------------------------------------------------------------
+        - name: "macOS: nothing planned (end host)"
+          ansible.builtin.debug:
+            msg: "No macOS installs planned. Ending host execution."
+          when: not (platform_has_work | bool)
+
+        - name: "macOS: end host (no work)"
           ansible.builtin.meta: end_host
-          when:
-            - (macos_brew_effective | length) == 0
-            - (macos_cask_effective | length) == 0
-            - (macos_script_effective | length) == 0
+          when: not (platform_has_work | bool)
 
         # ---------------------------------------------------------------------------------
         #                              PREREQUISITES (macOS)
         # ---------------------------------------------------------------------------------
-        - name: "macOS prerequisites: fail fast if brew is missing"
+        - name: "macOS prerequisites: check Homebrew exists"
           ansible.builtin.command: brew --version
           register: brew_check
           changed_when: false
-          failed_when: brew_check.rc != 0
+          failed_when: false
+
+        - name: "macOS prerequisites: fail if brew missing"
+          ansible.builtin.fail:
+            msg: "Homebrew ('brew') is required but not installed."
+          when: brew_check.rc != 0
 
         # ---------------------------------------------------------------------------------
         #                              INSTALLS (macOS)
@@ -162,45 +126,55 @@
           when: (macos_cask_effective | length) > 0
 
         # ---------------------------------------------------------------------------------
-        #                         SCRIPT INSTALLS (macOS) - IDEMPOTENT (SINGLE TASK)
+        #                         SCRIPT INSTALLS (macOS) — IDEMPOTENT
         # ---------------------------------------------------------------------------------
-        - name: "macOS scripts: run idempotent script installs (LAST)"
+        - name: "macOS scripts: run installers when not already installed (LAST)"
           ansible.builtin.shell: |
             set -euo pipefail
 
-            # Optional prereq check for this script (e.g. curl)
-            if [[ -n "{{ item.prereq_check | default('') }}" ]]; then
-              if ! ( {{ item.prereq_check }} ); then
-                echo "ERROR: prerequisites missing for script '{{ item.name }}'"
-                echo "  prereq_check: {{ item.prereq_check }}"
-                exit 2
-              fi
-            fi
+            echo "---- {{ item.name }} ----"
 
-            # Idempotent check + install
-            if ( {{ item.idempotent_check | default('false') }} ); then
-              echo "OK: '{{ item.name }}' already installed (idempotent_check passed)"
+            # ------------------------------------------------------------
+            # PREREQUISITES (declared per script)
+            # ------------------------------------------------------------
+            {% if item.prereq_check is defined %}
+            if ! ( {{ item.prereq_check }} ); then
+              echo "Missing prerequisites for '{{ item.name }}'"
+              exit 2
+            fi
+            {% endif %}
+
+            # ------------------------------------------------------------
+            # IDEMPOTENT CHECK
+            # ------------------------------------------------------------
+            if {{ item.idempotent_check }}; then
+              echo "Already installed: {{ item.name }}"
               exit 0
             fi
 
-            echo "INSTALL: running script '{{ item.name }}'"
+            # ------------------------------------------------------------
+            # INSTALL
+            # ------------------------------------------------------------
+            echo "Installing: {{ item.name }}"
             {{ item.cmd }}
           args:
             executable: /bin/bash
           become: "{{ (item.become | default(false)) | bool }}"
-          changed_when: true
-          loop: "{{ macos_script_effective }}"
+          register: macos_script_result
+          changed_when: "'Installing:' in (macos_script_result.stdout | default(''))"
+          loop: "{{ platform_script_effective }}"
           loop_control:
             label: "{{ item.name }}"
-          when: (macos_script_effective | length) > 0
+          when: (platform_script_effective | length) > 0
 
-      when: env_platform == "macos"
 
     # =================================================================================
     #                                     OMARCHY
     # =================================================================================
-    - name: "Omarchy pipeline"
+    - name: "Omarchy: baseline installer"
+      when: env_platform == "omarchy"
       block:
+
         # ---------------------------------------------------------------------------------
         #                     PLAN: BUILD EFFECTIVE LISTS (BASELINE + ADD - SKIP)
         # ---------------------------------------------------------------------------------
@@ -218,17 +192,10 @@
                 | union(env_omarchy_yay_add | default([]))
                 | difference(env_omarchy_yay_skip | default([]))
               }}
-            omarchy_script_effective: >-
+            platform_script_effective: >-
               {{
                 (omarchy_script | default([]))
                 + (env_omarchy_script_add | default([]))
-              }}
-
-        - name: "Omarchy plan: apply host script skips by name"
-          ansible.builtin.set_fact:
-            omarchy_script_effective: >-
-              {{
-                omarchy_script_effective
                 | rejectattr('name', 'in', (env_omarchy_script_skip | default([])))
                 | list
               }}
@@ -238,23 +205,38 @@
             msg:
               pacman: "{{ omarchy_pacman_effective }}"
               yay: "{{ omarchy_yay_effective }}"
-              script_names: "{{ omarchy_script_effective | map(attribute='name') | list }}"
+              script_names: "{{ platform_script_effective | map(attribute='name') | list }}"
               total: >-
                 {{
                   (omarchy_pacman_effective | length)
                   + (omarchy_yay_effective | length)
-                  + (omarchy_script_effective | length)
+                  + (platform_script_effective | length)
                 }}
 
-        - name: "Omarchy early-exit: end host when nothing planned"
-          ansible.builtin.meta: end_host
-          when:
-            - (omarchy_pacman_effective | length) == 0
-            - (omarchy_yay_effective | length) == 0
-            - (omarchy_script_effective | length) == 0
+        - name: "Omarchy plan: compute whether any installs are planned"
+          ansible.builtin.set_fact:
+            platform_has_work: >-
+              {{
+                (omarchy_pacman_effective | length)
+                + (omarchy_yay_effective | length)
+                + (platform_script_effective | length)
+                > 0
+              }}
 
         # ---------------------------------------------------------------------------------
-        #                              PREREQUISITES (OMARCHY)
+        #                              EARLY EXIT (OMARCHY)
+        # ---------------------------------------------------------------------------------
+        - name: "Omarchy: nothing planned (end host)"
+          ansible.builtin.debug:
+            msg: "No Omarchy installs planned (skip snapshot + installs). Ending host execution."
+          when: not (platform_has_work | bool)
+
+        - name: "Omarchy: end host (no work)"
+          ansible.builtin.meta: end_host
+          when: not (platform_has_work | bool)
+
+        # ---------------------------------------------------------------------------------
+        #                            PREREQUISITES (OMARCHY)
         # ---------------------------------------------------------------------------------
         - name: "Omarchy prerequisites: verify pacman exists (fail fast)"
           ansible.builtin.command: pacman --version
@@ -303,36 +285,43 @@
             - (yay_check.rc | default(1)) == 0
 
         # ---------------------------------------------------------------------------------
-        #                         SCRIPT INSTALLS (OMARCHY) - IDEMPOTENT (SINGLE TASK)
+        #                         SCRIPT INSTALLS (OMARCHY) — IDEMPOTENT
         # ---------------------------------------------------------------------------------
-        - name: "Omarchy scripts: run idempotent script installs (LAST)"
+        - name: "Omarchy scripts: run installers when not already installed (LAST)"
           ansible.builtin.shell: |
             set -euo pipefail
 
-            # Optional prereq check for this script (e.g. curl)
-            if [[ -n "{{ item.prereq_check | default('') }}" ]]; then
-              if ! ( {{ item.prereq_check }} ); then
-                echo "ERROR: prerequisites missing for script '{{ item.name }}'"
-                echo "  prereq_check: {{ item.prereq_check }}"
-                exit 2
-              fi
-            fi
+            echo "---- {{ item.name }} ----"
 
-            # Idempotent check + install
-            if ( {{ item.idempotent_check | default('false') }} ); then
-              echo "OK: '{{ item.name }}' already installed (idempotent_check passed)"
+            # ------------------------------------------------------------
+            # PREREQUISITES (declared per script)
+            # ------------------------------------------------------------
+            {% if item.prereq_check is defined %}
+            if ! ( {{ item.prereq_check }} ); then
+              echo "Missing prerequisites for '{{ item.name }}'"
+              exit 2
+            fi
+            {% endif %}
+
+            # ------------------------------------------------------------
+            # IDEMPOTENT CHECK
+            # ------------------------------------------------------------
+            if {{ item.idempotent_check }}; then
+              echo "Already installed: {{ item.name }}"
               exit 0
             fi
 
-            echo "INSTALL: running script '{{ item.name }}'"
+            # ------------------------------------------------------------
+            # INSTALL
+            # ------------------------------------------------------------
+            echo "Installing: {{ item.name }}"
             {{ item.cmd }}
           args:
             executable: /bin/bash
           become: "{{ (item.become | default(false)) | bool }}"
-          changed_when: true
-          loop: "{{ omarchy_script_effective }}"
+          register: omarchy_script_result
+          changed_when: "'Installing:' in (omarchy_script_result.stdout | default(''))"
+          loop: "{{ platform_script_effective }}"
           loop_control:
             label: "{{ item.name }}"
-          when: (omarchy_script_effective | length) > 0
-
-      when: env_platform == "omarchy"
+          when: (platform_script_effective | length) > 0
