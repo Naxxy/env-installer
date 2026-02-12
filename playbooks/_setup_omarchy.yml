@@ -1,6 +1,6 @@
----
-# Omarchy installer pipeline
-# ==========================
+# --------------------------------------------------------------------------------
+#                           OMARCHY INSTALLER PIPELINE
+# --------------------------------------------------------------------------------
 # What this file is:
 # - Omarchy-only implementation layer.
 #
@@ -11,8 +11,12 @@
 # IMPORTANT SAFETY BEHAVIOR:
 # - We do NOT run pacman -Syu here.
 # - We do NOT perform "system upgrades" in this baseline.
-# - We only install requested packages (pacman -S --needed) to minimize risk.
+# - We only install requested packages (pacman -S --needed / yay -S --needed) to minimize risk.
 
+---
+# --------------------------------------------------------------------------------
+#                     PREREQUISITE: VERIFY PACMAN EXISTS
+# --------------------------------------------------------------------------------
 - name: "Omarchy preflight: verify pacman exists (fail fast)"
   # What this does:
   # - Runs `pacman --version` to confirm pacman exists.
@@ -25,33 +29,161 @@
   changed_when: false
   failed_when: pacman_check.rc != 0
 
-- name: "Omarchy preflight: check whether yay exists (only required for AUR items)"
+# --------------------------------------------------------------------------------
+#                     BUILD INSTALL PLAN: FILTER SKIPPED ITEMS
+# --------------------------------------------------------------------------------
+- name: "Omarchy plan: initialise install lists"
+  # What this does:
+  # - Creates empty lists we will populate with package names.
+  #
+  # Why it’s needed:
+  # - Makes the plan explicit and debuggable before any installs happen.
+  ansible.builtin.set_fact:
+    omarchy_pacman_installs: []
+    omarchy_yay_installs: []
+
+- name: "Omarchy plan: build filtered pacman/yay install lists (merge-based, minimal Jinja)"
+  # What this does:
+  # - Walks the install catalog once.
+  # - Merges skip/overrides with a predictable precedence order:
+  #     defaults -> item -> platform -> host override
+  # - Appends pacman/yay package names ONLY when the merged result is not skipped.
+  #
+  # Why it’s needed:
+  # - Avoids repeating skip logic across multiple tasks.
+  # - Keeps the plan-building readable while still allowing host-level overrides.
+  vars:
+    install_key: "{{ item.key }}"
+    install_def: "{{ item.value }}"
+    platform_def: "{{ (install_def.omarchy | default({})) if (install_def is mapping) else {} }}"
+    host_override: "{{ (env_install_overrides[install_key] | default({})) if (env_install_overrides is mapping) else {} }}"
+    resolved: >-
+      {{
+        {'skip': false}
+        | combine(install_def | default({}))
+        | combine(platform_def)
+        | combine(host_override)
+      }}
+  ansible.builtin.set_fact:
+    omarchy_pacman_installs: >-
+      {{
+        omarchy_pacman_installs
+        + ([resolved.pacman] if (not (resolved.skip | bool) and (resolved.pacman is defined)) else [])
+      }}
+    omarchy_yay_installs: >-
+      {{
+        omarchy_yay_installs
+        + ([resolved.yay] if (not (resolved.skip | bool) and (resolved.yay is defined)) else [])
+      }}
+  loop: "{{ installs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: "Omarchy plan: debug filtered pacman/yay install lists (auditable plan)"
+  # What this does:
+  # - Prints the final install plan after skip/override resolution.
+  #
+  # Why it’s needed:
+  # - When something installs or skips unexpectedly, this is the first output you check.
+  ansible.builtin.debug:
+    msg:
+      pacman_installs: "{{ omarchy_pacman_installs }}"
+      yay_installs: "{{ omarchy_yay_installs }}"
+      total_installs: "{{ (omarchy_pacman_installs | length) + (omarchy_yay_installs | length) }}"
+
+- name: "Omarchy plan: early exit note when no installs are needed"
+  # What this does:
+  # - Emits a single message when the plan is empty.
+  #
+  # Why it’s needed:
+  # - Prevents noisy snapshot creation and avoids running preflight steps unnecessarily.
+  ansible.builtin.debug:
+    msg: "No Omarchy installs planned (all items skipped or no omarchy pacman/yay fields). Skipping snapshot + installs."
+  when: ((omarchy_pacman_installs | length) + (omarchy_yay_installs | length)) == 0
+
+# --------------------------------------------------------------------------------
+#                PREREQUISITE: CHECK YAY / AUR INSTALLS (ONLY IF NEEDED)
+# --------------------------------------------------------------------------------
+- name: "Omarchy preflight: check whether yay exists (only required when AUR installs are needed)"
   # What this does:
   # - Runs `yay --version` to see if AUR installs are possible.
   #
   # Why it’s needed:
-  # - Some items (e.g. brave-bin) are commonly AUR-based.
-  # - We want to fail with a clear message only when an item actually needs yay.
+  # - AUR packages (e.g. brave-bin) require an AUR helper.
+  # - We check ONCE, and only if we actually have yay installs to perform.
   ansible.builtin.command: yay --version
   register: yay_check
   changed_when: false
   failed_when: false
+  when:
+    - ((omarchy_pacman_installs | length) + (omarchy_yay_installs | length)) > 0
+    - (omarchy_yay_installs | length) > 0
 
-- name: Omarchy preflight: create system snapshot before installs
-  ansible.builtin.import_tasks: _preflight_omarchy_snapshot.yml
-
-- name: "Omarchy: iterate install catalog and handle each item (install/skip/fail)"
+- name: "Omarchy preflight: fail if yay installs are required but yay is missing"
   # What this does:
-  # - Loops through installs: { brave, yt_dlp, mpv, ... }.
-  # - Delegates one item at a time to _setup_omarchy_item.yml.
+  # - Hard-fails when the plan includes yay installs but yay isn't available.
   #
   # Why it’s needed:
-  # - Centralizes iteration while keeping the item handler readable.
-  # - Ensures every item in the catalog is processed deterministically.
-  ansible.builtin.include_tasks: _setup_omarchy_item.yml
-  loop: "{{ installs | dict2items }}"
-  loop_control:
-    label: "{{ item.key }}"
-  vars:
-    install_key: "{{ item.key }}"
-    install_def: "{{ item.value }}"
+  # - Prevents a “green run” that silently skipped part of your baseline.
+  ansible.builtin.fail:
+    msg: >-
+      This host has AUR installs planned (yay): {{ omarchy_yay_installs }},
+      but 'yay' is not available.
+      Install yay, or mark the relevant items as skipped.
+  when:
+    - ((omarchy_pacman_installs | length) + (omarchy_yay_installs | length)) > 0
+    - (omarchy_yay_installs | length) > 0
+    - (yay_check.rc | default(1)) != 0
+
+# --------------------------------------------------------------------------------
+#                SAFETY STEP: SNAPSHOT BEFORE INSTALLS (ONLY IF NEEDED)
+# --------------------------------------------------------------------------------
+- name: "Omarchy preflight: create system snapshot before installs (only when installs are planned)"
+  # What this does:
+  # - Creates a bootable Omarchy system snapshot before making changes.
+  #
+  # Why it’s needed:
+  # - Provides a fast rollback point if anything goes wrong during installs.
+  # - We only do this when there is actually something to install (avoids noise).
+  ansible.builtin.import_tasks: _preflight_omarchy_snapshot.yml
+  when: ((omarchy_pacman_installs | length) + (omarchy_yay_installs | length)) > 0
+
+# --------------------------------------------------------------------------------
+#                          INSTALL: PACMAN PACKAGES
+# --------------------------------------------------------------------------------
+- name: "Omarchy: install pacman packages (pacman -S --needed ...)"
+  # What this does:
+  # - Installs all planned pacman packages in one command:
+  #     pacman -S --noconfirm --needed <pkg1> <pkg2> ...
+  #
+  # Why it’s needed:
+  # - Repo packages should be installed via pacman (not yay).
+  # - --needed avoids reinstalling already-installed packages.
+  # - We intentionally avoid full upgrades (no pacman -Syu).
+  become: true
+  ansible.builtin.command: >-
+    pacman -S --noconfirm --needed {{ omarchy_pacman_installs | map('quote') | join(' ') }}
+  register: pacman_install
+  changed_when: true
+  when:
+    - (omarchy_pacman_installs | length) > 0
+
+# --------------------------------------------------------------------------------
+#                            INSTALL: YAY / AUR PACKAGES
+# --------------------------------------------------------------------------------
+- name: "Omarchy: install yay packages (yay -S --needed ...)"
+  # What this does:
+  # - Installs all planned yay/AUR packages in one command:
+  #     yay -S --noconfirm --needed <pkg1> <pkg2> ...
+  #
+  # Why it’s needed:
+  # - AUR packages are commonly needed on Omarchy (e.g. brave-bin).
+  # - --needed avoids reinstalling already-installed packages.
+  # - We still avoid full upgrades here; this is a targeted install only.
+  ansible.builtin.command: >-
+    yay -S --noconfirm --needed {{ omarchy_yay_installs | map('quote') | join(' ') }}
+  register: yay_install
+  changed_when: true
+  when:
+    - (omarchy_yay_installs | length) > 0
+    - (yay_check.rc | default(1)) == 0
