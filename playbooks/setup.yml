@@ -2,153 +2,269 @@
 - name: Baseline installer (macOS + Omarchy)
   hosts: all
   gather_facts: true
+  connection: local
 
   vars:
-    # INSTALL CATALOG
-    # ---------------
-    # What this is:
-    # - A single, declarative “source of truth” for installs.
-    # - Each item (e.g. brave) contains per-platform details (macos/omarchy).
-    #
-    # Why we want this shape:
-    # - You can see support per platform at a glance.
-    # - Missing per-platform details can be made to fail fast (instead of silently skipping).
-    # - It’s easy to add an item: add a new key + its macos/omarchy install details.
-    #
-    # Skip precedence (highest → lowest):
-    # 1) Host override: env_install_overrides.<item>.skip
-    #    - Lets one host opt-out/opt-in regardless of catalog defaults.
-    # 2) Platform-level: installs.<item>.<platform>.skip
-    #    - Lets an item be skipped only on one platform (e.g. skip on macOS only).
-    # 3) Item-level: installs.<item>.skip
-    #    - Lets an item default to skipped globally unless overridden.
-    # 4) Default: false
-    #    - Installs run unless explicitly skipped somewhere.
-    installs:
-      brave:
-        # DEFAULT SKIP EXAMPLE
-        # --------------------
-        # What this does:
-        # - If you set skip: true here, qutebrowser is skipped on ALL platforms by default.
-        #
-        # Why this exists:
-        # - Demonstrates how to keep an item in the catalog but default-disable it.
-        # - You can later re-enable per platform (installs.qutebrowser.macos.skip=false)
-        #   or per host (env_install_overrides.qutebrowser.skip=false).
-        skip: false
-        macos:
-          # Installs Brave via Homebrew cask on macOS.
-          cask: "brave-browser"
-          skip: false
-        omarchy:
-          # Brave is commonly installed from AUR on Arch/Omarchy (brave-bin).
-          # This requires yay. If yay is missing, we fail (unless skip=true).
-          yay: "brave-bin"
-          skip: false
+    # --------------------------------------------------------------------------------
+    #                             BASELINE INSTALL LISTS
+    # --------------------------------------------------------------------------------
+    # Declare lists per platform. Keep it boring and explicit.
+    # Scripts are run LAST (after packages/casks).
 
-      yt_dlp:
-        macos:
-          brew: "yt-dlp"
-          skip: false
-        omarchy:
-          pacman: "yt-dlp"
-          skip: false
+    # macOS
+    macos_brew:
+      - yt-dlp
+      - mpv
+      - tmux
+      - neovim
+      - qutebrowser
+      - netbirdio/tap/netbird
 
-      mpv:
-        macos:
-          brew: "mpv"
-          skip: false
-        omarchy:
-          pacman: "mpv"
-          skip: false
+    macos_cask:
+      - brave-browser
 
-      tmux:
-        macos:
-          brew: "tmux"
-          skip: false
-        omarchy:
-          pacman: "tmux"
-          skip: false
+    macos_script: []
+    # Example:
+    # macos_script:
+    #   - cmd: "curl -fsSL https://example/install.sh | sh"
+    #     become: false
 
-      neovim:
-        macos:
-          brew: "neovim"
-          skip: false
-        omarchy:
-          pacman: "neovim"
-          skip: false
+    # Omarchy
+    omarchy_pacman:
+      - yt-dlp
+      - mpv
+      - tmux
+      - neovim
+      - qutebrowser
+      - netbird
+      - curl
 
-      netbird:
-        macos:
-          # Default to CLI install so it can be configured headlessly if you later want.
-          brew: "netbirdio/tap/netbird"
-          skip: false
-        omarchy:
-          pacman: "netbird"
-          skip: false
+    omarchy_yay:
+      - brave-bin
 
-      qutebrowser:
-        macos:
-          brew: "qutebrowser"
-          skip: false
-        omarchy:
-          pacman: "qutebrowser"
-          skip: false
+    omarchy_script: []
+    # Example:
+    # omarchy_script:
+    #   - cmd: "curl -fsSL https://zed.dev/install.sh | sh"
+    #     become: false
 
-  # ============================
-  # PRE-INSTALL TASKS
-  # ============================
   pre_tasks:
-    - name: "Preflight: assert env_platform is explicitly defined (fail fast to prevent wrong installs)"
-      # What this does:
-      # - Ensures every host declares env_platform (macos or omarchy).
-      #
-      # Why it’s needed:
-      # - Prevents accidental “auto-detection” mistakes.
-      # - Stops you from running Omarchy commands on macOS or vice-versa.
+    - name: "Preflight: assert env_platform is set"
       ansible.builtin.assert:
         that:
           - env_platform is defined
           - env_platform in ["macos", "omarchy"]
-        fail_msg: >-
-          env_platform must be set per-host to one of: macos, omarchy.
-          Example: inventory/host_vars/<host>.yml:
-            env_platform: omarchy
+        fail_msg: "env_platform must be set per host to macos or omarchy."
 
-    - name: "Preflight: print platform + override context (makes runs auditable)"
-      # What this does:
-      # - Outputs the key decisions driving the run: platform + any per-host overrides.
-      #
-      # Why it’s needed:
-      # - When something installs or skips unexpectedly, this debug output is the first thing you check.
-      # - Keeps the system transparent and easy to reason about.
-      ansible.builtin.debug:
-        msg:
-          host: "{{ inventory_hostname }}"
-          env_platform: "{{ env_platform }}"
-          overrides_present: "{{ (env_install_overrides is defined) | bool }}"
-          overrides: "{{ env_install_overrides | default({}) }}"
-
-  # ============================
-  # PLATFORM SPECIFIC INSTALLERS
-  # ============================
   tasks:
-    - name: "Dispatch: run the macOS installer pipeline only when env_platform=macos"
-      # What this does:
-      # - Calls the macOS-specific setup file.
-      #
-      # Why it’s needed:
-      # - Keeps setup.yml clean and platform-agnostic.
-      # - Ensures macOS logic stays isolated and simple.
-      ansible.builtin.import_tasks: _setup_macos.yml
+    # =================================================================================
+    #                                      macOS
+    # =================================================================================
+    # ---------------------------------------------------------------------------------
+    #                              PREREQUISITES (macOS)
+    # ---------------------------------------------------------------------------------
+    - name: "macOS prerequisites: compute whether any installs are planned"
+      ansible.builtin.set_fact:
+        macos_has_work: "{{ (macos_brew | length) + (macos_cask | length) + (macos_script | length) > 0 }}"
       when: env_platform == "macos"
 
-    - name: "Dispatch: run the Omarchy installer pipeline only when env_platform=omarchy"
-      # What this does:
-      # - Calls the Omarchy-specific setup file.
-      #
-      # Why it’s needed:
-      # - Prevents any Arch/Pacman/Yay assumptions from leaking into other platforms.
-      # - Keeps Omarchy logic isolated and easy to harden.
-      ansible.builtin.import_tasks: _setup_omarchy.yml
+    - name: "macOS prerequisites: check Homebrew exists"
+      ansible.builtin.command: brew --version
+      register: brew_check
+      changed_when: false
+      failed_when: false
+      when:
+        - env_platform == "macos"
+        - macos_has_work | bool
+
+    - name: "macOS prerequisites: fail if brew missing"
+      ansible.builtin.fail:
+        msg: "Homebrew ('brew') is required but not installed."
+      when:
+        - env_platform == "macos"
+        - macos_has_work | bool
+        - brew_check.rc != 0
+
+    - name: "macOS prerequisites: check curl exists (only if scripts planned)"
+      ansible.builtin.command: curl --version
+      register: macos_curl_check
+      changed_when: false
+      failed_when: false
+      when:
+        - env_platform == "macos"
+        - (macos_script | length) > 0
+
+    - name: "macOS prerequisites: fail if scripts planned but curl missing"
+      ansible.builtin.fail:
+        msg: "Script installs planned but 'curl' is missing."
+      when:
+        - env_platform == "macos"
+        - (macos_script | length) > 0
+        - (macos_curl_check.rc | default(1)) != 0
+
+    # ---------------------------------------------------------------------------------
+    #                              EARLY EXIT (macOS)
+    # ---------------------------------------------------------------------------------
+    - name: "macOS: nothing planned (skip)"
+      ansible.builtin.debug:
+        msg: "No macOS installs planned."
+      when:
+        - env_platform == "macos"
+        - not (macos_has_work | bool)
+
+    # ---------------------------------------------------------------------------------
+    #                              INSTALLS (macOS)
+    # ---------------------------------------------------------------------------------
+    - name: "macOS: install brew formulae"
+      ansible.builtin.command: "brew install {{ item | quote }}"
+      changed_when: true
+      loop: "{{ macos_brew }}"
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - env_platform == "macos"
+        - macos_has_work | bool
+        - (macos_brew | length) > 0
+
+    - name: "macOS: install casks"
+      ansible.builtin.command: "brew install --cask {{ item | quote }}"
+      changed_when: true
+      loop: "{{ macos_cask }}"
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - env_platform == "macos"
+        - macos_has_work | bool
+        - (macos_cask | length) > 0
+
+    - name: "macOS: run script installs (LAST)"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {{ item.cmd }}
+      args:
+        executable: /bin/bash
+      become: "{{ (item.become | default(false)) | bool }}"
+      changed_when: true
+      loop: "{{ macos_script }}"
+      loop_control:
+        label: "{{ item.cmd }}"
+      when:
+        - env_platform == "macos"
+        - macos_has_work | bool
+        - (macos_script | length) > 0
+
+    # =================================================================================
+    #                                     OMARCHY
+    # =================================================================================
+    # ---------------------------------------------------------------------------------
+    #                            PREREQUISITES (OMARCHY)
+    # ---------------------------------------------------------------------------------
+    - name: "Omarchy prerequisites: compute whether any installs are planned"
+      ansible.builtin.set_fact:
+        omarchy_has_work: "{{ (omarchy_pacman | length) + (omarchy_yay | length) + (omarchy_script | length) > 0 }}"
       when: env_platform == "omarchy"
+
+    - name: "Omarchy prerequisites: verify pacman exists (fail fast)"
+      ansible.builtin.command: pacman --version
+      register: pacman_check
+      changed_when: false
+      failed_when: pacman_check.rc != 0
+      when:
+        - env_platform == "omarchy"
+        - omarchy_has_work | bool
+
+    - name: "Omarchy prerequisites: check curl exists (fail fast if scripts planned)"
+      ansible.builtin.command: curl --version
+      register: omarchy_curl_check
+      changed_when: false
+      failed_when: false
+      when:
+        - env_platform == "omarchy"
+        - (omarchy_script | length) > 0
+
+    - name: "Omarchy prerequisites: fail if scripts planned but curl missing"
+      ansible.builtin.fail:
+        msg: "Script installs planned but 'curl' is missing."
+      when:
+        - env_platform == "omarchy"
+        - (omarchy_script | length) > 0
+        - (omarchy_curl_check.rc | default(1)) != 0
+
+    - name: "Omarchy prerequisites: check yay exists (only if yay installs planned)"
+      ansible.builtin.command: yay --version
+      register: yay_check
+      changed_when: false
+      failed_when: false
+      when:
+        - env_platform == "omarchy"
+        - omarchy_has_work | bool
+        - (omarchy_yay | length) > 0
+
+    - name: "Omarchy prerequisites: fail if yay installs planned but yay missing"
+      ansible.builtin.fail:
+        msg: >-
+          AUR installs planned (yay): {{ omarchy_yay }},
+          but 'yay' is not available.
+      when:
+        - env_platform == "omarchy"
+        - omarchy_has_work | bool
+        - (omarchy_yay | length) > 0
+        - (yay_check.rc | default(1)) != 0
+
+    # ---------------------------------------------------------------------------------
+    #                              EARLY EXIT (OMARCHY)
+    # ---------------------------------------------------------------------------------
+    - name: "Omarchy: nothing planned (skip snapshot + installs)"
+      ansible.builtin.debug:
+        msg: "No Omarchy installs planned (skip snapshot + installs)."
+      when:
+        - env_platform == "omarchy"
+        - not (omarchy_has_work | bool)
+
+    # ---------------------------------------------------------------------------------
+    #                         SAFETY: SNAPSHOT BEFORE INSTALLS
+    # ---------------------------------------------------------------------------------
+    - name: "Omarchy: create system snapshot before installs"
+      ansible.builtin.import_tasks: _preflight_omarchy_snapshot.yml
+      when:
+        - env_platform == "omarchy"
+        - omarchy_has_work | bool
+
+    # ---------------------------------------------------------------------------------
+    #                              INSTALLS (OMARCHY)
+    # ---------------------------------------------------------------------------------
+    - name: "Omarchy: install pacman packages"
+      become: true
+      ansible.builtin.command: >-
+        pacman -S --noconfirm --needed {{ omarchy_pacman | map('quote') | join(' ') }}
+      changed_when: true
+      when:
+        - env_platform == "omarchy"
+        - omarchy_has_work | bool
+        - (omarchy_pacman | length) > 0
+
+    - name: "Omarchy: install yay packages"
+      ansible.builtin.command: >-
+        yay -S --noconfirm --needed {{ omarchy_yay | map('quote') | join(' ') }}
+      changed_when: true
+      when:
+        - env_platform == "omarchy"
+        - omarchy_has_work | bool
+        - (omarchy_yay | length) > 0
+        - (yay_check.rc | default(1)) == 0
+
+    - name: "Omarchy: run script installs (LAST)"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {{ item.cmd }}
+      args:
+        executable: /bin/bash
+      become: "{{ (item.become | default(false)) | bool }}"
+      changed_when: true
+      loop: "{{ omarchy_script }}"
+      loop_control:
+        label: "{{ item.cmd }}"
+      when:
+        - env_platform == "omarchy"
+        - omarchy_has_work | bool
+        - (omarchy_script | length) > 0
