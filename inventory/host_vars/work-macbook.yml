@@ -1,13 +1,13 @@
 env_platform: macos
 
-# Optional host-level overrides:
-# - per item: set skip true/false
-# - or override package names
-env_install_overrides:
-  # Example: skip qutebrowser on this host even if supported
-  # qutebrowser:
-  #   skip: true
+# --------------------------------------------------------------------------------
+# Host-level overrides (simple + explicit)
+# --------------------------------------------------------------------------------
+env_macos_brew_add: []
+env_macos_brew_skip: []
 
-  # Example: force brave install even if catalog sets skip somewhere
-  # brave:
-  #   skip: false
+env_macos_cask_add: []
+env_macos_cask_skip: []
+
+env_macos_script_add: []
+env_macos_script_skip: []

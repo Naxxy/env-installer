@@ -10,8 +10,14 @@
     # --------------------------------------------------------------------------------
     # Declare lists per platform. Keep it boring and explicit.
     # Scripts are run LAST (after packages/casks).
+    #
+    # Script item shape:
+    #   - name: stable identifier for host-level skipping
+    #   - installed_check: command that returns 0 when "already installed"
+    #   - cmd: the install command(s)
+    #   - become: whether to sudo for the script step
 
-    # macOS
+    # macOS baseline
     macos_brew:
       - yt-dlp
       - mpv
@@ -26,10 +32,12 @@
     macos_script: []
     # Example:
     # macos_script:
-    #   - cmd: "curl -fsSL https://example/install.sh | sh"
+    #   - name: zed
+    #     installed_check: "command -v zed"
+    #     cmd: "curl -fsSL https://zed.dev/install.sh | sh"
     #     become: false
 
-    # Omarchy
+    # Omarchy baseline
     omarchy_pacman:
       - yt-dlp
       - mpv
@@ -45,7 +53,9 @@
     omarchy_script: []
     # Example:
     # omarchy_script:
-    #   - cmd: "curl -fsSL https://zed.dev/install.sh | sh"
+    #   - name: zed
+    #     installed_check: "command -v zed"
+    #     cmd: "curl -fsSL https://zed.dev/install.sh | sh"
     #     become: false
 
   pre_tasks:
@@ -61,13 +71,67 @@
     #                                      macOS
     # =================================================================================
     # ---------------------------------------------------------------------------------
-    #                              PREREQUISITES (macOS)
+    #                     PLAN: BUILD EFFECTIVE LISTS (BASELINE + ADD - SKIP)
     # ---------------------------------------------------------------------------------
-    - name: "macOS prerequisites: compute whether any installs are planned"
+    - name: "macOS plan: compute effective install lists"
       ansible.builtin.set_fact:
-        macos_has_work: "{{ (macos_brew | length) + (macos_cask | length) + (macos_script | length) > 0 }}"
+        macos_brew_effective: >-
+          {{
+            (macos_brew | default([]))
+            | union(env_macos_brew_add | default([]))
+            | difference(env_macos_brew_skip | default([]))
+          }}
+        macos_cask_effective: >-
+          {{
+            (macos_cask | default([]))
+            | union(env_macos_cask_add | default([]))
+            | difference(env_macos_cask_skip | default([]))
+          }}
+        macos_script_effective: >-
+          {{
+            (macos_script | default([]))
+            + (env_macos_script_add | default([]))
+          }}
       when: env_platform == "macos"
 
+    - name: "macOS plan: apply host script skips by name"
+      ansible.builtin.set_fact:
+        macos_script_effective: >-
+          {{
+            macos_script_effective
+            | rejectattr('name', 'in', (env_macos_script_skip | default([])))
+            | list
+          }}
+      when: env_platform == "macos"
+
+    - name: "macOS plan: debug effective lists"
+      ansible.builtin.debug:
+        msg:
+          brew: "{{ macos_brew_effective }}"
+          cask: "{{ macos_cask_effective }}"
+          script_names: "{{ macos_script_effective | map(attribute='name') | list }}"
+          total: >-
+            {{
+              (macos_brew_effective | length)
+              + (macos_cask_effective | length)
+              + (macos_script_effective | length)
+            }}
+      when: env_platform == "macos"
+
+    - name: "macOS plan: compute whether any installs are planned"
+      ansible.builtin.set_fact:
+        macos_has_work: >-
+          {{
+            (macos_brew_effective | length)
+            + (macos_cask_effective | length)
+            + (macos_script_effective | length)
+            > 0
+          }}
+      when: env_platform == "macos"
+
+    # ---------------------------------------------------------------------------------
+    #                              PREREQUISITES (macOS)
+    # ---------------------------------------------------------------------------------
     - name: "macOS prerequisites: check Homebrew exists"
       ansible.builtin.command: brew --version
       register: brew_check
@@ -92,14 +156,14 @@
       failed_when: false
       when:
         - env_platform == "macos"
-        - (macos_script | length) > 0
+        - (macos_script_effective | length) > 0
 
     - name: "macOS prerequisites: fail if scripts planned but curl missing"
       ansible.builtin.fail:
         msg: "Script installs planned but 'curl' is missing."
       when:
         - env_platform == "macos"
-        - (macos_script | length) > 0
+        - (macos_script_effective | length) > 0
         - (macos_curl_check.rc | default(1)) != 0
 
     # ---------------------------------------------------------------------------------
@@ -118,52 +182,127 @@
     - name: "macOS: install brew formulae"
       ansible.builtin.command: "brew install {{ item | quote }}"
       changed_when: true
-      loop: "{{ macos_brew }}"
+      loop: "{{ macos_brew_effective }}"
       loop_control:
         label: "{{ item }}"
       when:
         - env_platform == "macos"
         - macos_has_work | bool
-        - (macos_brew | length) > 0
+        - (macos_brew_effective | length) > 0
 
     - name: "macOS: install casks"
       ansible.builtin.command: "brew install --cask {{ item | quote }}"
       changed_when: true
-      loop: "{{ macos_cask }}"
+      loop: "{{ macos_cask_effective }}"
       loop_control:
         label: "{{ item }}"
       when:
         - env_platform == "macos"
         - macos_has_work | bool
-        - (macos_cask | length) > 0
+        - (macos_cask_effective | length) > 0
 
-    - name: "macOS: run script installs (LAST)"
+    # ---------------------------------------------------------------------------------
+    #                         SCRIPT INSTALLS (macOS) - IDEMPOTENT
+    # ---------------------------------------------------------------------------------
+    - name: "macOS scripts: check installed state"
       ansible.builtin.shell: |
         set -euo pipefail
-        {{ item.cmd }}
+        {{ item.installed_check }}
       args:
         executable: /bin/bash
-      become: "{{ (item.become | default(false)) | bool }}"
-      changed_when: true
-      loop: "{{ macos_script }}"
+      register: macos_script_checks
+      changed_when: false
+      failed_when: false
+      loop: "{{ macos_script_effective }}"
       loop_control:
-        label: "{{ item.cmd }}"
+        label: "{{ item.name }}"
       when:
         - env_platform == "macos"
         - macos_has_work | bool
-        - (macos_script | length) > 0
+        - (macos_script_effective | length) > 0
+
+    - name: "macOS: run script installs (LAST) when installed_check fails"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {{ item.item.cmd }}
+      args:
+        executable: /bin/bash
+      become: "{{ (item.item.become | default(false)) | bool }}"
+      changed_when: true
+      loop: "{{ macos_script_checks.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - env_platform == "macos"
+        - macos_has_work | bool
+        - (macos_script_effective | length) > 0
+        - (item.rc | default(1)) != 0
 
     # =================================================================================
     #                                     OMARCHY
     # =================================================================================
     # ---------------------------------------------------------------------------------
-    #                            PREREQUISITES (OMARCHY)
+    #                     PLAN: BUILD EFFECTIVE LISTS (BASELINE + ADD - SKIP)
     # ---------------------------------------------------------------------------------
-    - name: "Omarchy prerequisites: compute whether any installs are planned"
+    - name: "Omarchy plan: compute effective install lists"
       ansible.builtin.set_fact:
-        omarchy_has_work: "{{ (omarchy_pacman | length) + (omarchy_yay | length) + (omarchy_script | length) > 0 }}"
+        omarchy_pacman_effective: >-
+          {{
+            (omarchy_pacman | default([]))
+            | union(env_omarchy_pacman_add | default([]))
+            | difference(env_omarchy_pacman_skip | default([]))
+          }}
+        omarchy_yay_effective: >-
+          {{
+            (omarchy_yay | default([]))
+            | union(env_omarchy_yay_add | default([]))
+            | difference(env_omarchy_yay_skip | default([]))
+          }}
+        omarchy_script_effective: >-
+          {{
+            (omarchy_script | default([]))
+            + (env_omarchy_script_add | default([]))
+          }}
       when: env_platform == "omarchy"
 
+    - name: "Omarchy plan: apply host script skips by name"
+      ansible.builtin.set_fact:
+        omarchy_script_effective: >-
+          {{
+            omarchy_script_effective
+            | rejectattr('name', 'in', (env_omarchy_script_skip | default([])))
+            | list
+          }}
+      when: env_platform == "omarchy"
+
+    - name: "Omarchy plan: debug effective lists"
+      ansible.builtin.debug:
+        msg:
+          pacman: "{{ omarchy_pacman_effective }}"
+          yay: "{{ omarchy_yay_effective }}"
+          script_names: "{{ omarchy_script_effective | map(attribute='name') | list }}"
+          total: >-
+            {{
+              (omarchy_pacman_effective | length)
+              + (omarchy_yay_effective | length)
+              + (omarchy_script_effective | length)
+            }}
+      when: env_platform == "omarchy"
+
+    - name: "Omarchy prerequisites: compute whether any installs are planned"
+      ansible.builtin.set_fact:
+        omarchy_has_work: >-
+          {{
+            (omarchy_pacman_effective | length)
+            + (omarchy_yay_effective | length)
+            + (omarchy_script_effective | length)
+            > 0
+          }}
+      when: env_platform == "omarchy"
+
+    # ---------------------------------------------------------------------------------
+    #                            PREREQUISITES (OMARCHY)
+    # ---------------------------------------------------------------------------------
     - name: "Omarchy prerequisites: verify pacman exists (fail fast)"
       ansible.builtin.command: pacman --version
       register: pacman_check
@@ -180,14 +319,14 @@
       failed_when: false
       when:
         - env_platform == "omarchy"
-        - (omarchy_script | length) > 0
+        - (omarchy_script_effective | length) > 0
 
     - name: "Omarchy prerequisites: fail if scripts planned but curl missing"
       ansible.builtin.fail:
         msg: "Script installs planned but 'curl' is missing."
       when:
         - env_platform == "omarchy"
-        - (omarchy_script | length) > 0
+        - (omarchy_script_effective | length) > 0
         - (omarchy_curl_check.rc | default(1)) != 0
 
     - name: "Omarchy prerequisites: check yay exists (only if yay installs planned)"
@@ -198,17 +337,17 @@
       when:
         - env_platform == "omarchy"
         - omarchy_has_work | bool
-        - (omarchy_yay | length) > 0
+        - (omarchy_yay_effective | length) > 0
 
     - name: "Omarchy prerequisites: fail if yay installs planned but yay missing"
       ansible.builtin.fail:
         msg: >-
-          AUR installs planned (yay): {{ omarchy_yay }},
+          AUR installs planned (yay): {{ omarchy_yay_effective }},
           but 'yay' is not available.
       when:
         - env_platform == "omarchy"
         - omarchy_has_work | bool
-        - (omarchy_yay | length) > 0
+        - (omarchy_yay_effective | length) > 0
         - (yay_check.rc | default(1)) != 0
 
     # ---------------------------------------------------------------------------------
@@ -236,35 +375,56 @@
     - name: "Omarchy: install pacman packages"
       become: true
       ansible.builtin.command: >-
-        pacman -S --noconfirm --needed {{ omarchy_pacman | map('quote') | join(' ') }}
+        pacman -S --noconfirm --needed {{ omarchy_pacman_effective | map('quote') | join(' ') }}
       changed_when: true
       when:
         - env_platform == "omarchy"
         - omarchy_has_work | bool
-        - (omarchy_pacman | length) > 0
+        - (omarchy_pacman_effective | length) > 0
 
     - name: "Omarchy: install yay packages"
       ansible.builtin.command: >-
-        yay -S --noconfirm --needed {{ omarchy_yay | map('quote') | join(' ') }}
+        yay -S --noconfirm --needed {{ omarchy_yay_effective | map('quote') | join(' ') }}
       changed_when: true
       when:
         - env_platform == "omarchy"
         - omarchy_has_work | bool
-        - (omarchy_yay | length) > 0
+        - (omarchy_yay_effective | length) > 0
         - (yay_check.rc | default(1)) == 0
 
-    - name: "Omarchy: run script installs (LAST)"
+    # ---------------------------------------------------------------------------------
+    #                         SCRIPT INSTALLS (OMARCHY) - IDEMPOTENT
+    # ---------------------------------------------------------------------------------
+    - name: "Omarchy scripts: check installed state"
       ansible.builtin.shell: |
         set -euo pipefail
-        {{ item.cmd }}
+        {{ item.installed_check }}
       args:
         executable: /bin/bash
-      become: "{{ (item.become | default(false)) | bool }}"
-      changed_when: true
-      loop: "{{ omarchy_script }}"
+      register: omarchy_script_checks
+      changed_when: false
+      failed_when: false
+      loop: "{{ omarchy_script_effective }}"
       loop_control:
-        label: "{{ item.cmd }}"
+        label: "{{ item.name }}"
       when:
         - env_platform == "omarchy"
         - omarchy_has_work | bool
-        - (omarchy_script | length) > 0
+        - (omarchy_script_effective | length) > 0
+
+    - name: "Omarchy: run script installs (LAST) when installed_check fails"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {{ item.item.cmd }}
+      args:
+        executable: /bin/bash
+      become: "{{ (item.item.become | default(false)) | bool }}"
+      changed_when: true
+      loop: "{{ omarchy_script_checks.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - env_platform == "omarchy"
+        - omarchy_has_work | bool
+        - (omarchy_script_effective | length) > 0
+        - (item.rc | default(1)) != 0

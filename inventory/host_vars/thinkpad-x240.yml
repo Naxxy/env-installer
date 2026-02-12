@@ -1,11 +1,13 @@
 env_platform: omarchy
 
-# Optional host-level overrides:
-env_install_overrides:
-  # Example: skip netbird on this host
-  # netbird:
-  #   skip: true
+# --------------------------------------------------------------------------------
+# Host-level overrides (simple + explicit)
+# --------------------------------------------------------------------------------
+env_omarchy_pacman_add: []
+env_omarchy_pacman_skip: []
 
-  # Example: if you ever decide one host should NOT install brave:
-  # brave:
-  #   skip: true
+env_omarchy_yay_add: []
+env_omarchy_yay_skip: []
+
+env_omarchy_script_add: []
+env_omarchy_script_skip: []
