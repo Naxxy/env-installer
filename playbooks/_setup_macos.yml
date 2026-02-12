@@ -1,51 +1,133 @@
 ---
-# macOS installer pipeline
-# =======================
+# --------------------------------------------------------------------------------
+#                               macOS INSTALLER
+# --------------------------------------------------------------------------------
 # What this file is:
 # - The macOS-only implementation layer.
 #
 # Why it exists:
 # - Keeps macOS details out of setup.yml.
-# - Makes it obvious what commands run on macOS and why.
+# - Executes a catalog-driven install plan using Homebrew.
+#
+# Key behavior:
+# - Builds a filtered plan first (brew + cask), respecting skip precedence.
+# - If the plan is empty, it does nothing (quiet/noise-free).
+# - Installs are targeted (no “brew upgrade everything” behavior here).
 
+# --------------------------------------------------------------------------------
+#                     PREREQUISITE: CHECK HOMEBREW EXISTS
+# --------------------------------------------------------------------------------
 - name: "macOS preflight: verify Homebrew exists (fail fast)"
-  # What this does:
-  # - Runs `brew --version` to confirm the Homebrew command is available.
-  #
-  # Why it’s needed:
-  # - All macOS installs in this baseline use Homebrew.
-  # - Failing early is clearer than dozens of later “command not found” failures.
   ansible.builtin.command: brew --version
   register: brew_check
   changed_when: false
   failed_when: false
 
 - name: "macOS preflight: stop if brew is missing (no implicit bootstrap)"
-  # What this does:
-  # - Hard-fails if Homebrew is missing.
-  #
-  # Why it’s needed:
-  # - You want predictable, explicit behavior.
-  # - Bootstrapping brew automatically is often a policy decision (and can be interactive),
-  #   so we keep it manual unless you deliberately add a bootstrap step later.
   ansible.builtin.fail:
     msg: >-
       Homebrew ('brew') is required but not installed.
       Install it first, then re-run.
   when: brew_check.rc != 0
 
-- name: "macOS: iterate install catalog and handle each item (install/skip/fail)"
-  # What this does:
-  # - Loops through installs: { brave, yt_dlp, mpv, ... }.
-  # - Delegates one item at a time to _setup_macos_item.yml.
-  #
-  # Why it’s needed:
-  # - Centralizes “looping” here so the item handler stays focused.
-  # - Keeps the catalog-driven approach simple: add an item to installs, and it gets processed.
-  ansible.builtin.include_tasks: _setup_macos_item.yml
+# --------------------------------------------------------------------------------
+#                 PLAN: BUILD FILTERED BREW + CASK INSTALL LISTS
+# --------------------------------------------------------------------------------
+- name: "macOS plan: init empty install lists"
+  ansible.builtin.set_fact:
+    macos_brew_installs: []
+    macos_cask_installs: []
+
+# --------------------------------------------------------------------------------
+#                     PLAN: ADD NON-SKIPPED BREW INSTALLS
+# --------------------------------------------------------------------------------
+- name: "macOS plan: add non-skipped brew installs"
+  ansible.builtin.set_fact:
+    macos_brew_installs: "{{ macos_brew_installs + [brew_pkg] }}"
   loop: "{{ installs | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
   vars:
     install_key: "{{ item.key }}"
     install_def: "{{ item.value }}"
+
+    # --- Simplified skip precedence (host > platform > item > default) ---
+    override_skip: "{{ (env_install_overrides | default({})).get(install_key, {}).skip | default(omit) }}"
+    platform_skip: "{{ (install_def.macos | default({})).skip | default(omit) }}"
+    item_skip: "{{ install_def.skip | default(omit) }}"
+    effective_skip: "{{ (override_skip | default(platform_skip | default(item_skip | default(false)))) | bool }}"
+
+    brew_pkg: "{{ (install_def.macos | default({})).brew | default('') }}"
+  when:
+    - not (effective_skip | bool)
+    - brew_pkg | length > 0
+
+# --------------------------------------------------------------------------------
+#                     PLAN: ADD NON-SKIPPED CASK INSTALLS
+# --------------------------------------------------------------------------------
+- name: "macOS plan: add non-skipped cask installs"
+  ansible.builtin.set_fact:
+    macos_cask_installs: "{{ macos_cask_installs + [cask_pkg] }}"
+  loop: "{{ installs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    install_key: "{{ item.key }}"
+    install_def: "{{ item.value }}"
+
+    # --- Simplified skip precedence (host > platform > item > default) ---
+    override_skip: "{{ (env_install_overrides | default({})).get(install_key, {}).skip | default(omit) }}"
+    platform_skip: "{{ (install_def.macos | default({})).skip | default(omit) }}"
+    item_skip: "{{ install_def.skip | default(omit) }}"
+    effective_skip: "{{ (override_skip | default(platform_skip | default(item_skip | default(false)))) | bool }}"
+
+    cask_pkg: "{{ (install_def.macos | default({})).cask | default('') }}"
+  when:
+    - not (effective_skip | bool)
+    - cask_pkg | length > 0
+
+# --------------------------------------------------------------------------------
+#                         PLAN: DEBUG PRINT (AUDIT)
+# --------------------------------------------------------------------------------
+- name: "macOS plan: debug computed install lists"
+  ansible.builtin.debug:
+    msg:
+      brew_installs: "{{ macos_brew_installs }}"
+      cask_installs: "{{ macos_cask_installs }}"
+      total: "{{ (macos_brew_installs | length) + (macos_cask_installs | length) }}"
+
+# --------------------------------------------------------------------------------
+#                     EARLY EXIT: NOTHING TO INSTALL
+# --------------------------------------------------------------------------------
+- name: "macOS plan: no installs requested after filtering (skip execution)"
+  ansible.builtin.debug:
+    msg: "No macOS installs planned (all items skipped or no macOS entries)."
+  when:
+    - (macos_brew_installs | length) == 0
+    - (macos_cask_installs | length) == 0
+
+# --------------------------------------------------------------------------------
+#                            EXECUTE: BREW INSTALLS
+# --------------------------------------------------------------------------------
+- name: "macOS: install brew formulae (brew install <name>)"
+  ansible.builtin.command: >-
+    brew install {{ item | quote }}
+  register: brew_install
+  changed_when: true
+  loop: "{{ macos_brew_installs }}"
+  loop_control:
+    label: "{{ item }}"
+  when: (macos_brew_installs | length) > 0
+
+# --------------------------------------------------------------------------------
+#                            EXECUTE: CASK INSTALLS
+# --------------------------------------------------------------------------------
+- name: "macOS: install brew casks (brew install --cask <name>)"
+  ansible.builtin.command: >-
+    brew install --cask {{ item | quote }}
+  register: cask_install
+  changed_when: true
+  loop: "{{ macos_cask_installs }}"
+  loop_control:
+    label: "{{ item }}"
+  when: (macos_cask_installs | length) > 0
