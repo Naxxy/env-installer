@@ -161,7 +161,7 @@
             executable: /bin/bash
           become: "{{ (item.become | default(false)) | bool }}"
           register: macos_script_result
-          changed_when: "'Installing:' in (macos_script_result.stdout | default(''))"
+          changed_when: true
           loop: "{{ platform_script_effective }}"
           loop_control:
             label: "{{ item.name }}"
@@ -320,7 +320,7 @@
             executable: /bin/bash
           become: "{{ (item.become | default(false)) | bool }}"
           register: omarchy_script_result
-          changed_when: "'Installing:' in (omarchy_script_result.stdout | default(''))"
+          changed_when: true
           loop: "{{ platform_script_effective }}"
           loop_control:
             label: "{{ item.name }}"
